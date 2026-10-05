@@ -68,9 +68,13 @@ Vincula um talhão, uma cultivar e uma data de emergência para iniciar o rastre
 - Talhão com safras não pode ser excluído (ver módulo de Propriedades); as FKs de `harvests` são `RESTRICT`.
 
 ### 3. Motor MSA (`/harvests/:id/msa`)
-O cálculo em si é a biblioteca pura `src/modules/msa/engine/` (`docs/msa/algoritmos.md`). O `msa.service.ts` liga clima → motor → banco → API, **de forma síncrona** (o Monte Carlo de 1.000 iterações leva ~0,1 s). Disparo:
-- **Endpoint manual** `POST /api/v1/harvests/:id/msa/process` (AGRONOMO/ADMIN) — implementado
-- **Cron job semanal** para todas as safras ativas, após o `ingest --latest` do ETL (BullMQ) — próxima change
+O cálculo em si é a biblioteca pura `src/modules/msa/engine/` (`docs/msa/algoritmos.md`). O `msa.service.ts` liga clima → motor → banco (o Monte Carlo de 1.000 iterações leva ~0,1 s). O processamento roda no processo **`worker`** (fila `msa-process`, BullMQ) e é disparado por:
+- **Semanal** — segunda-feira 02:00 (Brasília), depois do `era5-ingest latest`, uma run `reason: WEEKLY` por safra ativa;
+- **Criação da safra** — `POST /harvests` enfileira o backfill da célula (se faltar cobertura) e o processamento `reason: BACKFILL`; a resposta traz `msaJobId`;
+- **Manual** — `POST /api/v1/harvests/:id/msa/process` (AGRONOMO/ADMIN) responde **202** `{ jobId, queue: "msa-process", status: "queued" }` e a run sai com `reason: MANUAL`. Com `?sync=true` (**só ADMIN**; 403 `SYNC_ADMIN_ONLY` para os demais) processa inline e responde 201/200/422/500 como antes — válvula para operação e roteiros.
+- **Operação** — `POST /api/v1/admin/jobs/process-all` (ADMIN) enfileira todas as safras ativas.
+
+Cada run registra `reason` e `jobId` (nulo no inline); runs do worker têm `triggeredById` nulo. Detalhes das filas: `docs/msa/era5-etl.md` § Orquestração.
 
 **Pré-requisitos no talhão:** `altitudeM` obrigatório (422 `MISSING_FIELD_ALTITUDE`, sem run); `thetaFC`/`thetaWP` opcionais (default 0,28/0,12, registrado no snapshot com `soilDefaults: true`).
 
@@ -86,20 +90,19 @@ Gera os três cenários de `algoritmos.md` §8 a partir do P50 do Ks da janela n
 ## Fluxo Operacional Detalhado
 
 ```
-1. [Cron semanal] → Consulta safras ativas com talhão e cultivar
-2. Para cada safra:
-   a. Busca dados ERA5-Land do período (série diária: Tmax, Tmin, Rs, UR, u2, P)
-   b. Calcula GDA acumulado → determina janela fenológica atual (F1/F2/F3/F4)
-   c. Calcula ET₀ diária (FAO-56 Penman-Monteith)
-   d. Calcula ETc = Kc(fase) × ET₀
-   e. Executa balanço hídrico diário → Dr, Ks, ETc_adj
-   f. Acumula Ks por janela fenológica
-   g. Dispara job BullMQ: Monte Carlo (1.000 iterações)
-      ├── Perturbação P: ±30% (distribuição normal)
-      └── Perturbação T: ±0,6°C (distribuição normal)
-   h. Calcula perfis P10 / P50 / P90 por janela
-3. Persiste resultados em `msa_results` e `msa_scenarios`
-4. Notifica o técnico se alguma janela apresenta Ks_médio < 0,85 (estresse moderado)
+1. [Scheduler BullMQ: segunda 02:00 America/Sao_Paulo] → job `msa-weekly:trigger`
+2. Flow: filho `era5-ingest {kind: latest}` (ETL Python; [hoje−16, hoje−6], todas as células; 3 tentativas)
+         → pai `msa-weekly:run` só executa se o filho concluiu
+3. Pai enfileira `msa-process {harvestId, reason: WEEKLY}` por safra ACTIVE (jobId weekly_<data>_<id>)
+4. Worker Node (concorrência 4), para cada job:
+   a. Busca a série diária da célula do talhão (Tmax, Tmin, Tdew, u2, Rn, P)
+   b. GDA acumulado → janela fenológica (F1/F2/F3/F4) e fim do ciclo
+   c. ET₀ diária (FAO-56) → ETc = Kc(GDA) × ET₀
+   d. Balanço hídrico diário → Dr, Ks, ETc_adj; Ks acumulado por janela
+   e. Monte Carlo (1.000 iterações; P ~ N(1, 0,3²), T ~ N(0, 0,6²)) → P10/P50/P90 por janela
+   f. Persiste run (reason, jobId, snapshots, seed), série baseline e resumos
+5. Mesmo caminho para `reason: BACKFILL` (criação de safra) e `reason: MANUAL` (endpoint / process-all)
+6. Pendente: notificação ao técnico quando alguma janela apresenta Ks_médio < 0,85
 ```
 
 ---
@@ -174,13 +177,17 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | Método | Path | Descrição | Roles |
 |---|---|---|---|
 | POST | `/api/v1/harvests` | Cadastra nova safra | AGRONOMO, ADMIN |
-| POST | `/api/v1/harvests/:id/msa/process?seed=` | Processa (ou reprocessa) a safra: 201 run `SUCCEEDED` com resumos; 200 run `NEEDS_DATA` com `missingDates`; 422 `MISSING_FIELD_ALTITUDE`; 500 `MSA_PROCESSING_FAILED` (run `FAILED` gravada) | AGRONOMO, ADMIN |
+| POST | `/api/v1/harvests/:id/msa/process?seed=` | Enfileira o (re)processamento: **202** `{ jobId, queue, status: "queued" }`; 404 fora do escopo | AGRONOMO, ADMIN |
+| POST | `/api/v1/harvests/:id/msa/process?sync=true&seed=` | Processa inline: 201 run `SUCCEEDED` com resumos; 200 run `NEEDS_DATA` com `missingDates`; 422 `MISSING_FIELD_ALTITUDE`; 500 `MSA_PROCESSING_FAILED` (run `FAILED` gravada); 403 `SYNC_ADMIN_ONLY` para não-ADMIN | ADMIN |
 | GET | `/api/v1/harvests/:id/msa` | Última run `SUCCEEDED`: metadados, snapshots, 4 janelas com baseline e percentis, `currentPhase`; 404 `NO_MSA_RESULT` | Todos |
 | GET | `/api/v1/harvests/:id/msa/daily?runId=` | Série diária baseline da run (padrão: última) | Todos |
 | GET | `/api/v1/harvests/:id/msa/runs` | Histórico de runs (sem séries), mais recente primeiro | Todos |
 | GET | `/api/v1/harvests/:id/msa/decision?phase=&doseBase=&efficiencyBase=` | Cenários (a)/(b)/(c) sobre a última run; nada persistido | Todos |
 | POST | `/api/v1/harvests/:id/msa/decisions` | Registra a escolha do técnico (`phase`, `scenario`, `doseBase`, `efficiencyBase`, `justification`, `runId?`) | AGRONOMO, ADMIN |
 | GET | `/api/v1/harvests/:id/msa/decisions` | Decisões da safra, mais recente primeiro | Todos |
+| GET | `/api/v1/admin/jobs/queues` | Contagens por fila (`waiting`, `active`, `completed`, `failed`, `delayed`, `waiting-children`) e `weekly.nextRun` | ADMIN |
+| GET | `/api/v1/admin/jobs/:queue/:id` | Estado, `progress`, `attemptsMade`, `failedReason`, `returnvalue`, timestamps; 404 se não existe | ADMIN |
+| POST | `/api/v1/admin/jobs/ingest-latest` · `/backfill-region` · `/process-all` | 202 com `jobId`/`queue` (`backfill-region`: `{ bbox: [N, W, S, E], from, to }`) | ADMIN |
 
 ---
 
@@ -193,9 +200,12 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | `src/modules/msa/msa.routes.ts` · `msa.controller.ts` · `dtos/` | Rotas sob `/harvests/:id/msa` |
 | `src/modules/msa/era5.repository.ts` | Série diária do talhão no formato do motor; cobertura |
 | `src/modules/msa/engine/` | Motor puro: GDA, fenologia, ET₀, Kc, balanço, FAO-33, Monte Carlo, cenários (`ENGINE_VERSION`) |
-| `backend/etl/` | ETL Python — ERA5-Land (`ingest`, `backfill`, `status`) |
-| `backend/scripts/e2e/e2e-msa.sh` | Roteiro de ponta a ponta do processamento |
-| (próxima change) `monte-carlo.worker.ts` | Job BullMQ semanal: `ingest --latest` + processamento das safras ativas |
+| `src/modules/jobs/flows.ts` · `jobs.service.ts` | Filas, payloads, flows (semanal, backfill), `planHarvestJobs`, ids determinísticos; enfileiramento e consulta |
+| `src/modules/jobs/jobs.routes.ts` · `jobs.controller.ts` | `/api/v1/admin/jobs` (ADMIN) |
+| `src/worker.ts` | Processo `worker`: consumidores `msa-process` (×4) e `msa-weekly`, scheduler semanal, shutdown gracioso |
+| `src/config/queue.ts` | Nomes das filas e conexão BullMQ (separada do Redis do limite de login) |
+| `backend/etl/` | ETL Python — worker da fila `era5-ingest` + CLI (`ingest`, `backfill`, `status`, `worker`) |
+| `backend/scripts/e2e/e2e-msa.sh` · `e2e-orchestration.sh` | Roteiros de ponta a ponta do processamento (inline) e da orquestração (filas) |
 | `docs/msa/algoritmos.md` | Fórmulas matemáticas completas |
 | `docs/msa/era5-etl.md` | Pipeline de ingestão e correção |
 | `docs/msa/validacao.md` | Protocolo de validação científica |

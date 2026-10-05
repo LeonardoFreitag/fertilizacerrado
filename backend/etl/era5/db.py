@@ -10,6 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 Cell = tuple[float, float]  # (lat, lon) na grade de 0,1°
+BBox = tuple[float, float, float, float]  # (N, W, S, E)
 
 UPSERT_SQL = """
 INSERT INTO era5_daily_data
@@ -38,6 +39,20 @@ def connect(database_url: str) -> psycopg.Connection:
 def distinct_cells(conn: psycopg.Connection) -> list[Cell]:
     rows = conn.execute(
         "SELECT DISTINCT cell_lat, cell_lon FROM era5_cells ORDER BY 1, 2"
+    ).fetchall()
+    return [(float(r["cell_lat"]), float(r["cell_lon"])) for r in rows]
+
+
+def cells_in_bbox(conn: psycopg.Connection, bbox: BBox) -> list[Cell]:
+    """Células distintas de ``era5_cells`` dentro da bbox (N, W, S, E), bordas inclusas."""
+    north, west, south, east = bbox
+    rows = conn.execute(
+        """
+        SELECT DISTINCT cell_lat, cell_lon FROM era5_cells
+        WHERE cell_lat BETWEEN %s AND %s AND cell_lon BETWEEN %s AND %s
+        ORDER BY 1, 2
+        """,
+        (south, north, west, east),
     ).fetchall()
     return [(float(r["cell_lat"]), float(r["cell_lon"])) for r in rows]
 
@@ -71,18 +86,28 @@ def harvest_cell(conn: psycopg.Connection, harvest_id: str) -> HarvestCell | Non
 
 
 def open_run(
-    conn: psycopg.Connection, command: str, date_from: date | None, date_to: date | None
+    conn: psycopg.Connection,
+    command: str,
+    date_from: date | None,
+    date_to: date | None,
+    job_id: str | None = None,
 ) -> str:
     row = conn.execute(
         """
-        INSERT INTO era5_ingestion_runs (id, command, date_from, date_to, status)
-        VALUES (gen_random_uuid(), %s, %s, %s, 'RUNNING')
+        INSERT INTO era5_ingestion_runs (id, command, date_from, date_to, status, job_id, updated_at)
+        VALUES (gen_random_uuid(), %s, %s, %s, 'RUNNING', %s, now())
         RETURNING id
         """,
-        (command, date_from, date_to),
+        (command, date_from, date_to, job_id),
     ).fetchone()
     conn.commit()
     return str(row["id"])
+
+
+def touch_run(conn: psycopg.Connection, run_id: str) -> None:
+    """Heartbeat: prova de vida da run em curso (ver ``mark_orphaned_runs``)."""
+    conn.execute("UPDATE era5_ingestion_runs SET updated_at = now() WHERE id = %s", (run_id,))
+    conn.commit()
 
 
 def close_run(
@@ -98,7 +123,7 @@ def close_run(
     conn.execute(
         """
         UPDATE era5_ingestion_runs
-        SET finished_at = now(), status = %s, cells_requested = %s,
+        SET finished_at = now(), updated_at = now(), status = %s, cells_requested = %s,
             rows_upserted = %s, cds_request_id = %s, error = %s
         WHERE id = %s
         """,
@@ -107,11 +132,28 @@ def close_run(
     conn.commit()
 
 
+def mark_orphaned_runs(conn: psycopg.Connection, hours: int = 6) -> int:
+    """Runs ``RUNNING`` sem heartbeat há mais de ``hours`` (processo morreu no
+    meio) viram ``FAILED`` com erro ``orphaned``. Devolve quantas."""
+    cur = conn.execute(
+        """
+        UPDATE era5_ingestion_runs
+        SET status = 'FAILED', finished_at = now(), updated_at = now(),
+            error = 'orphaned: sem heartbeat há mais de ' || %s || ' h'
+        WHERE status = 'RUNNING'
+          AND COALESCE(updated_at, started_at) < now() - make_interval(hours => %s)
+        """,
+        (hours, hours),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
 def recent_runs(conn: psycopg.Connection, limit: int = 10) -> list[dict]:
     return conn.execute(
         """
-        SELECT id, command, started_at, finished_at, status, date_from, date_to,
-               cells_requested, rows_upserted, cds_request_id, error
+        SELECT id, command, started_at, finished_at, updated_at, status, date_from, date_to,
+               cells_requested, rows_upserted, cds_request_id, job_id, error
         FROM era5_ingestion_runs
         ORDER BY started_at DESC
         LIMIT %s

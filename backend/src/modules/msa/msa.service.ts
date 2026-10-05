@@ -4,7 +4,7 @@
  * ficam para a próxima change. `docs/modulos/msa.md`.
  */
 import { randomInt } from 'node:crypto';
-import type { MsaDecision, MsaRun, MsaScenario } from '@prisma/client';
+import type { MsaDecision, MsaRun, MsaRunReason, MsaScenario } from '@prisma/client';
 import { AppError } from '../../utils/app-error';
 import { CULTIVAR_PARAM_KEYS } from '../cultivars/dtos/cultivar-params.schema';
 import { harvestService } from '../harvests/harvest.service';
@@ -69,10 +69,18 @@ export interface PhaseView {
   };
 }
 
+export interface ProcessOptions {
+  seed?: number;
+  reason?: MsaRunReason;
+  jobId?: string;
+}
+
 export interface RunView {
   id: string;
   harvestId: string;
   status: MsaRun['status'];
+  reason: MsaRunReason;
+  jobId: string | null;
   startedAt: Date;
   finishedAt: Date;
   dateFrom: string;
@@ -113,6 +121,8 @@ export function toRunView(run: MsaRun): RunView {
     id: run.id,
     harvestId: run.harvestId,
     status: run.status,
+    reason: run.reason,
+    jobId: run.jobId,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     dateFrom: toStr(run.dateFrom),
@@ -241,9 +251,9 @@ async function accessibleHarvest(user: AuthUser, harvestId: string): Promise<Har
   return harvest;
 }
 
-export const msaService = {
-  async processHarvest(user: AuthUser, harvestId: string, options: { seed?: number } = {}): Promise<ProcessResult> {
-    const harvest = await accessibleHarvest(user, harvestId);
+/** Núcleo do processamento, compartilhado pela API (inline) e pelo worker. */
+async function runProcessing(harvest: HarvestForProcessing, options: ProcessOptions, triggeredById: string | null): Promise<ProcessResult> {
+    const harvestId = harvest.id;
     const soil = snapshotSoil(harvest.field); // 422 sem altitude, antes de qualquer run
     const cultivar = snapshotCultivar(harvest.cultivar);
 
@@ -258,7 +268,7 @@ export const msaService = {
     const base = {
       harvestId, startedAt, dateFrom: toDate(interval.from), dateTo: toDate(interval.to),
       cultivarSnapshot: cultivar as object, soilSnapshot: soil as object, engineVersion: ENGINE_VERSION,
-      triggeredById: user.id,
+      triggeredById, reason: options.reason ?? 'MANUAL', jobId: options.jobId ?? null,
     };
 
     if (interval.missingDates.length > 0) {
@@ -283,6 +293,20 @@ export const msaService = {
       const failed = await msaRepository.createRun({ ...base, status: 'FAILED', finishedAt: new Date(), seed, iterations: ITERATIONS, error: message });
       throw new AppError(500, 'MSA_PROCESSING_FAILED', `Falha no processamento (run ${failed.id}): ${message}`);
     }
+}
+
+export const msaService = {
+  /** Inline (API): escopo do usuário e triggeredById preenchido. */
+  async processHarvest(user: AuthUser, harvestId: string, options: ProcessOptions = {}): Promise<ProcessResult> {
+    const harvest = await accessibleHarvest(user, harvestId);
+    return runProcessing(harvest, options, user.id);
+  },
+
+  /** Worker: o job já foi autorizado por quem o enfileirou; sem escopo, triggeredById nulo. */
+  async processHarvestAsSystem(harvestId: string, options: ProcessOptions): Promise<ProcessResult> {
+    const harvest = await msaRepository.findHarvestForProcessing(harvestId);
+    if (!harvest) throw new AppError(404, 'NOT_FOUND', `Safra ${harvestId} não encontrada.`);
+    return runProcessing(harvest, options, null);
   },
 
   async getLatest(user: AuthUser, harvestId: string): Promise<ProcessResult> {

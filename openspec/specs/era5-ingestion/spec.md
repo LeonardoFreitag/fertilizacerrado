@@ -7,13 +7,13 @@ Serviço Python que baixa ERA5-Land do Copernicus CDS, agrega os passos horário
 ## Requirements
 
 ### Requirement: Serviço ETL em contêiner próprio
-O pipeline ERA5-Land SHALL residir em `backend/etl/` como pacote Python 3.12 (`era5/`) com `Dockerfile` baseado em `python:3.12-slim`, usuário não-root e `requirements.txt` fixado contendo `cdsapi>=0.7.2`, `xarray`, `netCDF4`, `numpy`, `pandas`, `psycopg[binary]` e `pytest`. O serviço `etl` dos dois Compose MUST estar no profile `etl`, não publicar portas, depender de `db` saudável e receber `DATABASE_URL`, `CDS_API_URL`, `CDS_API_KEY` e `ETL_CACHE_DIR` com o volume `etl_cache`. O serviço MUST ser executado por `docker compose run --rm etl <comando>` e MUST NOT iniciar com `docker compose up`.
+O pipeline ERA5-Land SHALL residir em `backend/etl/` como pacote Python 3.12 (`era5/`) com `Dockerfile` baseado em `python:3.12-slim`, usuário não-root e `requirements.txt` fixado contendo `cdsapi>=0.7.2`, `xarray`, `netCDF4`, `numpy`, `pandas`, `psycopg[binary]`, `bullmq`, `redis` e `pytest`. O serviço `etl` dos dois Compose MUST rodar como worker de longa duração (`python -m era5.cli worker`), fora de qualquer profile, com `restart`, sem publicar portas, dependendo de `db` e `redis` saudáveis e recebendo `DATABASE_URL`, `REDIS_URL`, `CDS_API_URL`, `CDS_API_KEY` e `ETL_CACHE_DIR` com o volume `etl_cache`. O CLI MUST continuar disponível por `docker compose run --rm etl <comando>`.
 
-#### Scenario: Stack sobe sem o ETL
+#### Scenario: Stack sobe com o ETL
 - **WHEN** `docker compose up -d` é executado
-- **THEN** o serviço `etl` não é iniciado nem construído
+- **THEN** o serviço `etl` sobe e passa a consumir a fila `era5-ingest`
 
-#### Scenario: Execução sob demanda
+#### Scenario: Execução manual continua possível
 - **WHEN** `docker compose run --rm etl status` é executado
 - **THEN** o contêiner sobe, conecta ao banco, imprime as últimas runs e encerra
 
@@ -41,7 +41,7 @@ O banco SHALL ter a hipertabela TimescaleDB `era5_daily_data` com chunk mensal e
 - **THEN** o client Prisma devolve as linhas sem SQL cru
 
 ### Requirement: Download por mês com cache
-`download.py` SHALL calcular a bounding box das células distintas de `era5_cells` (ou da célula indicada), expandida 0,1° em cada direção e alinhada à grade, e requisitar ao dataset `reanalysis-era5-land` do CDS, uma requisição por mês do intervalo `[from, to + 1 dia]`, as variáveis horárias `2m_temperature`, `2m_dewpoint_temperature`, `10m_u_component_of_wind`, `10m_v_component_of_wind`, `surface_net_solar_radiation`, `surface_net_thermal_radiation` e `total_precipitation`, em NetCDF (`data_format: netcdf`, `download_format: unarchived`). O arquivo de cada `(bbox, mês)` MUST ser gravado em `ETL_CACHE_DIR` e reutilizado em execuções seguintes sem nova requisição.
+`download.py` SHALL calcular a bounding box das células distintas de `era5_cells` (ou da célula indicada, ou da bbox informada), expandida 0,1° em cada direção e alinhada à grade, e requisitar ao dataset `reanalysis-era5-land` do CDS as variáveis horárias `2m_temperature`, `2m_dewpoint_temperature`, `10m_u_component_of_wind`, `10m_v_component_of_wind`, `surface_net_solar_radiation`, `surface_net_thermal_radiation` e `total_precipitation`, em NetCDF (`data_format: netcdf`, `download_format: unarchived`), cobrindo `[from, to + 1 dia]`: por mês para intervalos de até dois meses e por trimestre civil para intervalos maiores. O arquivo de cada `(bbox, mês)` ou `(bbox, trimestre)` MUST ser gravado em `ETL_CACHE_DIR` e reutilizado em execuções seguintes sem nova requisição; um trimestre cujos três meses já estão em cache MUST ser servido pelos arquivos mensais.
 
 #### Scenario: Bounding box das células
 - **WHEN** `era5_cells` tem células em (−16,7; −49,3) e (−16,2; −48,8)
@@ -52,7 +52,7 @@ O banco SHALL ter a hipertabela TimescaleDB `era5_daily_data` com chunk mensal e
 - **THEN** o pipeline também obtém o mês de dezembro (ao menos o passo 00 UTC de 01/12) para fechar os acumulados de 30/11
 
 #### Scenario: Cache
-- **WHEN** o mesmo `(bbox, mês)` é requisitado pela segunda vez
+- **WHEN** o mesmo `(bbox, mês)` ou `(bbox, trimestre)` é requisitado pela segunda vez
 - **THEN** nenhuma requisição é feita ao CDS e o arquivo em cache é usado
 
 #### Scenario: Erro do CDS
@@ -106,7 +106,7 @@ O banco SHALL ter a hipertabela TimescaleDB `era5_daily_data` com chunk mensal e
 - **THEN** a célula é pulada e a run registra o aviso
 
 ### Requirement: Comandos e registro de execuções
-`python -m era5.cli` SHALL oferecer `ingest --from AAAA-MM-DD --to AAAA-MM-DD`, `ingest --latest` (intervalo `[hoje − 16, hoje − 6]`), `backfill --harvest <uuid>` (da data de emergência da safra até `hoje − 6`, apenas a célula do talhão) e `status [--limit n]`. Toda execução de `ingest` ou `backfill` MUST criar uma linha em `era5_ingestion_runs` com `RUNNING` e fechá-la com `SUCCEEDED` (contagens) ou `FAILED` (erro). Erros MUST produzir código de saída 1.
+`python -m era5.cli` SHALL oferecer `ingest --from AAAA-MM-DD --to AAAA-MM-DD`, `ingest --latest` (intervalo `[hoje − 16, hoje − 6]`), `backfill --harvest <uuid>` (da data de emergência da safra até `hoje − 6`, apenas a célula do talhão), `status [--limit n]` e `worker` (consome a fila `era5-ingest` até receber `SIGTERM`). Toda execução de `ingest`, `backfill` ou job do worker MUST criar uma linha em `era5_ingestion_runs` com `RUNNING` (e `job_id` quando vinda da fila) e fechá-la com `SUCCEEDED` (contagens) ou `FAILED` (erro), atualizando `updated_at` a cada mês concluído. Erros do CLI MUST produzir código de saída 1.
 
 #### Scenario: Janela do latest
 - **WHEN** `ingest --latest` roda em 2026-10-05
@@ -126,7 +126,11 @@ O banco SHALL ter a hipertabela TimescaleDB `era5_daily_data` com chunk mensal e
 
 #### Scenario: Status
 - **WHEN** `status --limit 5` é executado
-- **THEN** imprime as 5 runs mais recentes com comando, intervalo, status, contagens e erro
+- **THEN** imprime as 5 runs mais recentes com comando, intervalo, status, contagens, `job_id` e erro
+
+#### Scenario: Worker encerra graciosamente
+- **WHEN** `worker` recebe `SIGTERM` com um job ativo
+- **THEN** conclui o job, fecha a run e encerra com código 0
 
 #### Scenario: Ponta a ponta com o CDS
 - **WHEN** `CDS_API_KEY` válida está configurada e `ingest --from --to` cobre 3 dias de um mês consolidado para a célula de um talhão

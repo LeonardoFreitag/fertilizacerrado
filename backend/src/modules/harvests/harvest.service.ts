@@ -2,6 +2,7 @@ import type { Crop, HarvestStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { AppError } from '../../utils/app-error';
 import { cultivarService } from '../cultivars/cultivar.service';
+import { jobsService } from '../jobs/jobs.service';
 import { accessFilter, propertyService, type AuthUser } from '../properties/property.service';
 import type { CreateHarvestDto } from './dtos/create-harvest.dto';
 import type { ListHarvestsQuery } from './dtos/params.dto';
@@ -9,6 +10,8 @@ import type { UpdateHarvestDto } from './dtos/update-harvest.dto';
 import { harvestRepository, type FieldRef, type HarvestWithRelations } from './harvest.repository';
 
 export interface HarvestResponse {
+  /** Só na criação: job BullMQ do processamento (null se o enfileiramento falhou) */
+  msaJobId?: string | null;
   id: string;
   fieldId: string;
   cultivarId: string;
@@ -92,7 +95,11 @@ export const harvestService = {
       );
     });
 
-    return toResponse(harvest);
+    // Backfill/processamento automático; falha no Redis não desfaz a criação.
+    const msaJobId = await jobsService.scheduleHarvestProcessing({
+      id: harvest.id, fieldId: harvest.fieldId, emergenceDate: harvest.emergenceDate,
+    });
+    return { ...toResponse(harvest), msaJobId };
   },
 
   async list(user: AuthUser, query: ListHarvestsQuery): Promise<HarvestResponse[]> {

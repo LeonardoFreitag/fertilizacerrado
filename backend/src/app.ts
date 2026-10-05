@@ -8,6 +8,7 @@ import { env } from './config/env';
 import { authRoutes } from './modules/auth/auth.routes';
 import { cultivarRoutes } from './modules/cultivars/cultivar.routes';
 import { harvestRoutes } from './modules/harvests/harvest.routes';
+import { jobsRoutes } from './modules/jobs/jobs.routes';
 import { propertyRoutes } from './modules/properties/property.routes';
 import { AppError } from './utils/app-error';
 
@@ -36,6 +37,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/properties', propertyRoutes);
 app.use('/api/v1/cultivars', cultivarRoutes);
 app.use('/api/v1/harvests', harvestRoutes);
+app.use('/api/v1/admin/jobs', jobsRoutes);
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({ error: 'Not Found', code: 'NOT_FOUND', path: req.originalUrl });

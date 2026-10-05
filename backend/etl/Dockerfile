@@ -19,6 +19,6 @@ RUN useradd --system --uid 1001 --create-home etl \
     && chown -R etl:etl /data/cache /app
 USER etl
 
-# Não é daemon: `docker compose run --rm etl <comando>`
+# Padrão: worker BullMQ (fila era5-ingest). CLI: `docker compose run --rm etl <comando>`
 ENTRYPOINT ["python", "-m", "era5.cli"]
-CMD ["status"]
+CMD ["worker"]

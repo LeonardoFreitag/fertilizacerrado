@@ -116,7 +116,7 @@ Multi-stage build com dois estágios:
 
 Serviços:
 - **db**: `postgres:15-alpine` — expor porta 5432, volume persistente, healthcheck com `pg_isready`
-- **redis**: `redis:7-alpine` — senha via env, `maxmemory 256mb`, `allkeys-lru`, porta 6379
+- **redis**: `redis:7-alpine` — senha via env, `maxmemory 256mb`, `noeviction` (exigido pelo BullMQ), porta 6379
 - **api**: build com `target: builder`, hot-reload via `ts-node-dev`, volumes de `src/` e `prisma/` como readonly, comando: `pnpm prisma migrate deploy && pnpm exec ts-node-dev --respawn --transpile-only src/server.ts`, depende de db e redis com `condition: service_healthy`
 - **nginx**: `nginx:1.25-alpine`, porta 80, usa `nginx.dev.conf`
 - **adminer**: `adminer:4-standalone`, porta 8080 (gerenciador visual do banco)

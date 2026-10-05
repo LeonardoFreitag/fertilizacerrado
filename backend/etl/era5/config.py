@@ -19,6 +19,7 @@ class Settings:
     cds_api_url: str
     cds_api_key: str | None
     cache_dir: str
+    redis_url: str | None = None
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -31,7 +32,13 @@ class Settings:
             cds_api_url=env.get("CDS_API_URL", "").strip() or DEFAULT_CDS_API_URL,
             cds_api_key=env.get("CDS_API_KEY", "").strip() or None,
             cache_dir=env.get("ETL_CACHE_DIR", "").strip() or "./cache",
+            redis_url=env.get("REDIS_URL", "").strip() or None,
         )
+
+    def require_redis_url(self) -> str:
+        if not self.redis_url:
+            raise ConfigError("REDIS_URL não definida: o worker precisa do Redis das filas BullMQ")
+        return self.redis_url
 
     def require_cds_key(self) -> str:
         """Token pessoal da API nova do CDS (sem ``uid:``)."""

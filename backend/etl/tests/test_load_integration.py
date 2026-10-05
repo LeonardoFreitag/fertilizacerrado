@@ -69,3 +69,34 @@ def test_hypertable_exists(conn):
         "SELECT hypertable_name FROM timescaledb_information.hypertables WHERE hypertable_name = 'era5_daily_data'"
     ).fetchone()
     assert row is not None
+
+
+def test_run_with_job_id_and_heartbeat(conn):
+    run_id = db.open_run(conn, "pytest worker ingest#j1", D1, D4, job_id="j1")
+    before = conn.execute("SELECT updated_at FROM era5_ingestion_runs WHERE id = %s", (run_id,)).fetchone()["updated_at"]
+    conn.execute("UPDATE era5_ingestion_runs SET updated_at = updated_at - interval '1 minute' WHERE id = %s", (run_id,))
+    conn.commit()
+    db.touch_run(conn, run_id)
+    run = conn.execute("SELECT job_id, updated_at FROM era5_ingestion_runs WHERE id = %s", (run_id,)).fetchone()
+    assert run["job_id"] == "j1" and run["updated_at"] >= before
+    db.close_run(conn, run_id, status="SUCCEEDED", cells_requested=1, rows_upserted=0)
+
+
+def test_mark_orphaned_runs(conn):
+    old = db.open_run(conn, "pytest worker órfã", D1, D4, job_id="j-old")
+    fresh = db.open_run(conn, "pytest worker recente", D1, D4, job_id="j-new")
+    conn.execute("UPDATE era5_ingestion_runs SET updated_at = now() - interval '7 hours' WHERE id = %s", (old,))
+    conn.commit()
+    assert db.mark_orphaned_runs(conn, hours=6) == 1
+    rows = {str(r["id"]): r for r in conn.execute(
+        "SELECT id, status, error FROM era5_ingestion_runs WHERE id IN (%s, %s)", (old, fresh)
+    ).fetchall()}
+    assert rows[old]["status"] == "FAILED" and rows[old]["error"].startswith("orphaned")
+    assert rows[fresh]["status"] == "RUNNING"
+    db.close_run(conn, fresh, status="SUCCEEDED", cells_requested=0, rows_upserted=0)
+
+
+def test_cells_in_bbox(conn):
+    cells = db.cells_in_bbox(conn, (90.0, -180.0, -90.0, 180.0))
+    assert cells == db.distinct_cells(conn)
+    assert db.cells_in_bbox(conn, (-89.0, 170.0, -89.5, 171.0)) == []

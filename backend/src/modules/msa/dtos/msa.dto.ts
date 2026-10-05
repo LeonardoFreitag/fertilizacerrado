@@ -7,6 +7,11 @@ export const msaParamsSchema = z.object({ id: uuid });
 
 export const processQuerySchema = z.object({
   seed: z.coerce.number().int().min(0).max(2 ** 31 - 1).optional(),
+  /** true ⇒ processa inline (só ADMIN); padrão enfileira */
+  sync: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 export const dailyQuerySchema = z.object({ runId: uuid.optional() });

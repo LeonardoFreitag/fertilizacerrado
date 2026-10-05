@@ -83,7 +83,11 @@ client.retrieve(
 )
 ```
 
-**Estratégia de bounding box:** o menor retângulo da grade que contém todas as células distintas de `era5_cells` (ou só a célula do talhão, no `backfill`), expandido 0,1° em cada direção — uma única área por requisição. **Uma requisição por mês**, e os meses cobrem `[from, to + 1 dia]`: o total diário dos acumulados do último dia exige o passo 00 UTC do dia seguinte. Cada `(bbox, mês)` fica em cache em `ETL_CACHE_DIR` (volume `etl_cache`) e não é pedido de novo.
+**Estratégia de bounding box:** o menor retângulo da grade que contém todas as células distintas de `era5_cells` (ou só a célula do talhão, no backfill; ou as células dentro da `bbox` informada, no backfill regional), expandido 0,1° em cada direção — uma única área por requisição. Os meses cobrem `[from, to + 1 dia]`: o total diário dos acumulados do último dia exige o passo 00 UTC do dia seguinte.
+
+**Granularidade das requisições** (`plan_periods`): intervalos de até **dois meses** (o `latest` semanal) são pedidos **por mês** (`cache/<bbox>/AAAA-MM.nc`); intervalos maiores (backfill de uma safra inteira, backfill regional) são pedidos **por trimestre civil** (`AAAA-Qn.nc`, uma requisição `year/month×3/day 01–31/time`) — o CDS limita o tamanho de uma requisição e o trimestre fica confortável (~46 mil campos para uma bbox pequena). Antes de pedir um trimestre, o pipeline reutiliza os **três arquivos mensais** quando todos já estão em cache. O trimestre que contém um mês ainda não consolidado volta a ser pedido por mês, para não gravar um trimestral parcial.
+
+**Cache** (`ETL_CACHE_DIR`, volume `etl_cache`): um mês **consolidado** (último dia + 6 dias já passou) vale para sempre; um mês **aberto** só vale no dia em que foi baixado — o `latest` da semana seguinte baixa o mês corrente de novo e enxerga os dias novos.
 
 ---
 
@@ -211,6 +215,8 @@ Chave primária `(time, cell_lat, cell_lon)`. Hipertabela com chunk mensal (`cre
 |---|---|
 | `id`, `command` | identificação e linha de comando (reproduzível) |
 | `started_at`, `finished_at`, `status` | `RUNNING` → `SUCCEEDED` / `FAILED` |
+| `updated_at` | heartbeat: renovado a cada período (mês/trimestre) obtido e a cada célula gravada; `RUNNING` sem heartbeat há mais de 6 h é marcada `FAILED` com erro `orphaned` quando o worker sobe |
+| `job_id` | id do job BullMQ (`era5-ingest`) que originou a run; nulo nas execuções pelo CLI |
 | `date_from`, `date_to`, `cells_requested`, `rows_upserted` | escopo e resultado |
 | `cds_request_id`, `error` | diagnóstico (mensagem do CDS, dias incompletos, células puladas) |
 
@@ -225,15 +231,27 @@ Reprocessar o mesmo intervalo produz as mesmas linhas — idempotente por constr
 
 ---
 
-## Agendamento
+## Orquestração (BullMQ)
 
-| Job | Frequência | Descrição |
-|---|---|---|
-| `era5-weekly-ingest` | Toda segunda-feira, 02h | `ingest --latest`: janela `[hoje − 16, hoje − 6]` (lag de ~5 dias com margem, sobreposição de uma semana) |
-| `era5-qm-calibration` | 1° de janeiro, 03h | Recalibra os parâmetros de Quantile Mapping |
-| `msa-batch-process` | Toda segunda-feira, 05h | Após a ingestão, processa todas as safras ativas |
+Três filas no Redis da stack (`redis`, política `noeviction`, exigida pelo BullMQ), dois processos consumidores:
 
-Todos os jobs serão gerenciados via BullMQ com Redis como broker, garantindo retry automático em caso de falha. **Estado atual:** os comandos existem e são executados manualmente (`docker compose run --rm etl …`); a fila é a próxima change.
+| Fila | Consumidor | Payload | Opções |
+|---|---|---|---|
+| `era5-ingest` | **ETL Python** (`python -m era5.cli worker`, serviço `etl`, concorrência 1) | `{ kind: "latest" }` — `[hoje − 16, hoje − 6]`, todas as células; `{ kind: "range", from, to, bbox? }` — células dentro da bbox `[N, W, S, E]` ou todas; `{ kind: "cell", lat, lon, from, to }` — só a célula | `attempts: 3`, backoff exponencial a partir de 5 min |
+| `msa-process` | **worker Node** (`node dist/worker.js`, serviço `worker`, concorrência 4) | `{ harvestId, seed?, reason: WEEKLY \| BACKFILL \| MANUAL }` | `attempts: 1` (o processamento é determinístico; falha vira run `FAILED`) |
+| `msa-weekly` | worker Node | `trigger` (repetível) e `run` (pai do flow semanal) | scheduler `msa-weekly-trigger`: `pattern '0 2 * * 1'`, `tz 'America/Sao_Paulo'` |
+
+A API só **enfileira**; nenhuma réplica instancia worker ou agendador.
+
+**Fluxo semanal** — toda segunda-feira às 02:00 (Brasília) o `trigger` cria um flow com pai `msa-weekly:run` e filho `era5-ingest {kind: "latest"}` (`failParentOnFailure`). O pai só executa quando o filho conclui e então enfileira um `msa-process {reason: "WEEKLY"}` por safra `ACTIVE` com `jobId` determinístico `weekly_<AAAA-MM-DD>_<harvestId>` (reexecutar o pai no mesmo dia não duplica). Se o ingest falhar nas 3 tentativas, o pai falha e nenhuma safra é processada com dados velhos.
+
+**Backfill ao criar safra** — `POST /api/v1/harvests` verifica a cobertura da célula do talhão de `emergenceDate` a `hoje − 6` (`planHarvestJobs`, função pura): com lacuna, cria um flow filho `era5-ingest {kind: "cell"}` → pai `msa-process {reason: "BACKFILL"}`; sem lacuna, só o `msa-process`; emergência dentro do lag, idem. A resposta traz `msaJobId` (`backfill_<harvestId>`; `null` se o Redis falhou — a safra é criada mesmo assim). O e2e `e2e-orchestration.sh` cobre uma safra de 2025-11-01 do cache ao resultado em ~30 s.
+
+**Worker Python** — cada job abre uma run com `job_id`, roda download → transformação → carga em uma thread (o loop asyncio renova o lock do BullMQ enquanto o CDS demora), reporta `progress {periodsDone, periodsTotal}` por período obtido e renova `updated_at`. Exceção ⇒ run `FAILED` e job falho (o BullMQ decide a tentativa). `SIGTERM` conclui o job em curso antes de sair. Na subida, marca órfãs (`RUNNING` há mais de 6 h sem heartbeat).
+
+**Operação** (`/api/v1/admin/jobs`, só `ADMIN`): `GET /queues` (contagens por fila + `weekly.nextRun`), `GET /:queue/:id` (estado, progresso, tentativas, erro), `POST /ingest-latest`, `POST /backfill-region {bbox, from, to}` (→ `era5-ingest range`), `POST /process-all` (→ `msa-process MANUAL` por safra ativa). Todas respondem 202 com `jobId` e `queue`.
+
+**Pendente:** `era5-qm-calibration` (recalibração anual do Quantile Mapping) entra quando a correção de viés existir.
 
 ---
 
@@ -245,4 +263,5 @@ Todos os jobs serão gerenciados via BullMQ com Redis como broker, garantindo re
 | Sem dados em tempo real | Fora do escopo do MSA; retrospectivo por design |
 | Resolução ~9 km | Adequada para o Cerrado; variabilidade sub-grade não modelada |
 | QM requer estações próximas | Estações INMET/ANA cobrindo o Cerrado são suficientes para calibração estadual |
-| Custo da API CDS | API gratuita para pesquisa; em produção, considerar cache local por safra |
+| Custo da API CDS | API gratuita para pesquisa; cache por `(bbox, mês/trimestre)` no volume `etl_cache` evita repetir requisições |
+| Heartbeat durante a fila do CDS | `updated_at` só muda por período concluído; uma requisição de 2 h sem resposta deixa a run sem heartbeat por 2 h — por isso o limite de órfã é 6 h |

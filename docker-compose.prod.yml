@@ -44,7 +44,7 @@ services:
       redis-server
       --requirepass ${REDIS_PASSWORD}
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
     healthcheck:
@@ -98,22 +98,62 @@ services:
       - backend_net
       - frontend_net
 
-  # ETL ERA5-Land: `docker compose -f docker-compose.prod.yml run --rm etl ingest --latest`.
-  # Precisa do banco (backend_net) e de saída para o CDS (frontend_net).
+  # Workers BullMQ (msa-process, msa-weekly) + agendador semanal. Sempre 1 réplica:
+  # o scheduler é idempotente, mas não há motivo para mais de um consumidor do semanal.
+  worker:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG:-latest}
+    command: ["node", "dist/worker.js"]
+    restart: always
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    stop_grace_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend_net
+      - frontend_net
+
+  # ETL ERA5-Land como worker da fila era5-ingest (CDS → TimescaleDB). CLI manual:
+  # `docker compose -f docker-compose.prod.yml run --rm etl status`.
+  # Precisa do banco e do Redis (backend_net) e de saída para o CDS (frontend_net).
   etl:
     image: ${ECR_REGISTRY}/${ECR_REPOSITORY_ETL:-fertiliza-etl}:${IMAGE_TAG:-latest}
-    profiles: ["etl"]
+    command: ["worker"]
+    restart: always
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
       CDS_API_KEY: ${CDS_API_KEY:-}
       ETL_CACHE_DIR: /data/cache
     volumes:
       - etl_cache:/data/cache
+    stop_grace_period: 30s
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
+      replicas: 1
       resources:
         limits:
           cpus: "1.0"

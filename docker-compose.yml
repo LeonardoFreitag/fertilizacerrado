@@ -23,7 +23,7 @@ services:
       redis-server
       --requirepass ${REDIS_PASSWORD}
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
     ports:
       - "6379:6379"
     volumes:
@@ -56,6 +56,27 @@ services:
       redis:
         condition: service_healthy
 
+  # Workers BullMQ (msa-process, msa-weekly) + agendador semanal; mesma build da API.
+  worker:
+    build:
+      context: ./backend
+      target: builder
+    command: pnpm exec ts-node-dev --respawn --transpile-only src/worker.ts
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    volumes:
+      - ./backend/src:/app/src:ro
+      - ./backend/prisma:/app/prisma:ro
+    stop_grace_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   nginx:
     image: nginx:1.25-alpine
     ports:
@@ -67,18 +88,25 @@ services:
 
   # ETL ERA5-Land (Python). Não é daemon: `docker compose run --rm etl <comando>`.
   # O profile impede que `docker compose up` o construa/inicie.
+  # ETL ERA5-Land como worker da fila era5-ingest. CLI manual:
+  # `docker compose run --rm etl status` / `ingest --latest` / `backfill --harvest <id>`.
   etl:
     build: ./backend/etl
-    profiles: ["etl"]
+    command: worker
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
       CDS_API_KEY: ${CDS_API_KEY:-}
       ETL_CACHE_DIR: /data/cache
     volumes:
       - etl_cache:/data/cache
+    stop_grace_period: 30s
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   adminer:

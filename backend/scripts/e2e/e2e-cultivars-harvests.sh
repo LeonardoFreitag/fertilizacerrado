@@ -4,11 +4,17 @@
 # admin e cultivares de referência).
 set -u
 cd "$(dirname "$0")/../../.."          # raiz do repositório (onde está o .env)
-S=$(mktemp -d); trap 'rm -rf "$S"' EXIT  # arquivos temporários do curl
+S=$(mktemp -d); trap 'rm -rf "$S"; resume_workers' EXIT  # arquivos temporários do curl
 API=http://localhost:3000/api/v1
 ADMIN_EMAIL=$(grep '^ADMIN_EMAIL=' .env | cut -d= -f2-)
 ADMIN_PASSWORD=$(grep '^ADMIN_PASSWORD=' .env | cut -d= -f2-)
 FAILS=0
+REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2-)
+# Workers parados durante o roteiro: a criação de safras enfileira backfill/processamento
+# (ETL real no CDS, runs extras) que alterariam o estado verificado aqui.
+purge_queues()   { for q in era5-ingest msa-process; do docker compose exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" EVAL "local n=0 for _,k in ipairs(redis.call('keys', ARGV[1])) do redis.call('del', k) n=n+1 end return n" 0 "bull:$q:*" >/dev/null 2>&1; done; }
+pause_workers()  { docker compose stop worker etl >/dev/null 2>&1; }
+resume_workers() { purge_queues; docker compose start worker etl >/dev/null 2>&1; }
 
 sql() { docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$0"' "$1"; }
 j()   { node -e 'let o;try{o=JSON.parse(require("fs").readFileSync(0,"utf8"))}catch{o={}};const v=process.argv[1].split(".").reduce((a,k)=>a==null?a:a[k],o);console.log(v===undefined?"":typeof v==="object"?JSON.stringify(v):v)' "$1"; }
@@ -38,6 +44,7 @@ today()      { date -u +%F; }
 tomorrow()   { date -u -v+1d +%F 2>/dev/null || date -u -d '+1 day' +%F; }
 
 # Limpa os dados de teste preservando o admin do seed e as cultivares de referência.
+pause_workers
 sql "TRUNCATE harvests CASCADE" >/dev/null 2>&1
 sql "TRUNCATE properties CASCADE" >/dev/null 2>&1
 sql "DELETE FROM cultivars WHERE is_default = false" >/dev/null
@@ -123,6 +130,7 @@ call POST /harvests "$ANA" "{\"fieldId\":\"$T1\",\"cultivarId\":\"$SOJA_REF\",\"
 call POST /harvests "$ANA" "{\"fieldId\":\"$T1\",\"cultivarId\":\"$SOJA_REF\",\"emergenceDate\":\"2025-11-10\",\"season\":\"25/26\"}"; check "season 25/26 → 400" 400 "$STATUS"
 call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" 2025-11-10 '"notes":"Plantio direto"')"; check "safra válida → 201" 201 "$STATUS"
 H1=$(echo "$BODY" | j id)
+check "resposta da criação traz msaJobId" 1 "$( [ -n "$(echo "$BODY" | j msaJobId)" ] && echo 1 || echo 0 )"
 check "status ACTIVE" ACTIVE "$(echo "$BODY" | j status)"; check "emergenceDate YYYY-MM-DD" 2025-11-10 "$(echo "$BODY" | j emergenceDate)"
 check "field.propertyId" "$P" "$(echo "$BODY" | j field.propertyId)"; check "cultivar.crop" SOJA "$(echo "$BODY" | j cultivar.crop)"; check "notes" "Plantio direto" "$(echo "$BODY" | j notes)"
 call POST /harvests "$ANA" "$(H "$T2" "$SOJA_REF" "$TODAY")";        check "emergência hoje → 201" 201 "$STATUS"; H2=$(echo "$BODY" | j id)

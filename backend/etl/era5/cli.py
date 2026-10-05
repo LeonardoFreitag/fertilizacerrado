@@ -1,7 +1,8 @@
-"""Entrypoint: ``python -m era5.cli {ingest,backfill,status}``.
+"""Entrypoint: ``python -m era5.cli {ingest,backfill,status,worker}``.
 
-Toda execução de ``ingest``/``backfill`` grava uma linha em
-``era5_ingestion_runs`` (RUNNING → SUCCEEDED/FAILED). Erros saem com código 1.
+Toda execução de ``ingest``/``backfill`` (e todo job do ``worker``) grava uma
+linha em ``era5_ingestion_runs`` (RUNNING → SUCCEEDED/FAILED). Erros saem com
+código 1.
 """
 
 from __future__ import annotations
@@ -10,7 +11,9 @@ import argparse
 import logging
 import shlex
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from typing import Callable
 
 from . import db, download, load, transform
 from .config import ConfigError, Settings
@@ -49,7 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="últimas execuções")
     status.add_argument("--limit", type=int, default=10)
+
+    sub.add_parser("worker", help="consome a fila BullMQ era5-ingest até receber SIGTERM")
     return parser
+
+
+@dataclass(frozen=True)
+class IngestSummary:
+    run_id: str
+    cells: int
+    rows: int
+    note: str | None
 
 
 def _ingest_cells(
@@ -60,18 +73,29 @@ def _ingest_cells(
     cells: list[tuple[float, float]],
     date_from: date,
     date_to: date,
-) -> int:
-    run_id = db.open_run(conn, command, date_from, date_to)
+    job_id: str | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> IngestSummary:
+    """Abre a run, baixa, transforma e grava; fecha a run como SUCCEEDED ou
+    FAILED (e relança). ``on_progress(concluídos, total)`` a cada período
+    (mês/trimestre) obtido; cada período e cada célula gravada renovam o
+    heartbeat ``updated_at`` da run."""
+    run_id = db.open_run(conn, command, date_from, date_to, job_id=job_id)
     log.info("run %s: %d célula(s), %s → %s", run_id, len(cells), date_from, date_to)
     try:
         if not cells:
             log.warning("nenhuma célula em era5_cells; nada a ingerir")
             db.close_run(conn, run_id, status="SUCCEEDED", cells_requested=0, rows_upserted=0)
-            return 0
+            return IngestSummary(run_id, 0, 0, None)
+
+        def progress(done: int, total: int) -> None:
+            db.touch_run(conn, run_id)
+            if on_progress:
+                on_progress(done, total)
 
         client = download.make_client(settings)
         bbox = download.grid_bbox(cells)
-        paths = download.fetch_range(client, bbox, date_from, date_to, settings.cache_dir)
+        paths = download.fetch_range(client, bbox, date_from, date_to, settings.cache_dir, on_progress=progress)
         ds = transform.open_hourly(paths)
 
         total = 0
@@ -86,6 +110,7 @@ def _ingest_cells(
             result = transform.aggregate_daily(selection.data, date_from, date_to)
             incomplete_total += len(result.incomplete_days)
             total += load.load_frame(conn, result.frame, cell)
+            db.touch_run(conn, run_id)
             log.info("célula %s: %d dia(s) gravado(s), %d incompleto(s)", cell, len(result.frame), len(result.incomplete_days))
 
         note = None
@@ -93,7 +118,7 @@ def _ingest_cells(
             note = f"células puladas: {len(skipped)}; dias incompletos: {incomplete_total}"
         db.close_run(conn, run_id, status="SUCCEEDED", cells_requested=len(cells), rows_upserted=total, error=note)
         log.info("concluído: %d linha(s) gravada(s)%s", total, f" ({note})" if note else "")
-        return 0
+        return IngestSummary(run_id, len(cells), total, note)
     except Exception as exc:  # noqa: BLE001 — qualquer falha fecha a run como FAILED
         db.close_run(conn, run_id, status="FAILED", cells_requested=len(cells), error=f"{type(exc).__name__}: {exc}")
         raise
@@ -109,7 +134,8 @@ def cmd_ingest(args, settings: Settings, conn, command: str) -> int:
     if date_from > date_to:
         raise ConfigError("--from posterior a --to")
     settings.require_cds_key()
-    return _ingest_cells(settings, conn, command=command, cells=db.distinct_cells(conn), date_from=date_from, date_to=date_to)
+    _ingest_cells(settings, conn, command=command, cells=db.distinct_cells(conn), date_from=date_from, date_to=date_to)
+    return 0
 
 
 def cmd_backfill(args, settings: Settings, conn, command: str) -> int:
@@ -122,7 +148,8 @@ def cmd_backfill(args, settings: Settings, conn, command: str) -> int:
     date_to = datetime.now(timezone.utc).date() - timedelta(days=LATEST_LAG_DAYS)
     if info.emergence_date > date_to:
         raise ConfigError(f"emergência {info.emergence_date} ainda dentro do lag do ERA5-Land (até {date_to})")
-    return _ingest_cells(settings, conn, command=command, cells=[info.cell], date_from=info.emergence_date, date_to=date_to)
+    _ingest_cells(settings, conn, command=command, cells=[info.cell], date_from=info.emergence_date, date_to=date_to)
+    return 0
 
 
 def cmd_status(args, conn) -> int:
@@ -130,14 +157,15 @@ def cmd_status(args, conn) -> int:
     if not runs:
         print("nenhuma execução registrada")
         return 0
-    print(f"{'iniciada em (UTC)':20} {'status':9} {'intervalo':23} {'cél.':>4} {'linhas':>6}  comando / erro")
+    print(f"{'iniciada em (UTC)':20} {'status':9} {'intervalo':23} {'cél.':>4} {'linhas':>6}  {'job':8}  comando / erro")
     for r in runs:
         started = r["started_at"].strftime("%Y-%m-%d %H:%M:%S")
         interval = f"{r['date_from']} → {r['date_to']}" if r["date_from"] else "-"
         cells = "" if r["cells_requested"] is None else str(r["cells_requested"])
         rows = "" if r["rows_upserted"] is None else str(r["rows_upserted"])
+        job = (r["job_id"] or "-")[:8]
         tail = r["command"] + (f"  [{r['error']}]" if r["error"] else "")
-        print(f"{started:20} {r['status']:9} {interval:23} {cells:>4} {rows:>6}  {tail}")
+        print(f"{started:20} {r['status']:9} {interval:23} {cells:>4} {rows:>6}  {job:8}  {tail}")
     return 0
 
 
@@ -148,6 +176,10 @@ def main(argv: list[str] | None = None) -> int:
     command = "era5 " + " ".join(shlex.quote(a) for a in argv)
     try:
         settings = Settings.from_env()
+        if args.command == "worker":
+            from .worker import run_worker  # import tardio: só o worker precisa do bullmq
+
+            return run_worker(settings)
         with db.connect(settings.database_url) as conn:
             if args.command == "status":
                 return cmd_status(args, conn)

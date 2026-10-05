@@ -4,11 +4,17 @@
 # de teste, processa, consulta, registra decisões. Pré-requisitos: ver README.md.
 set -u
 cd "$(dirname "$0")/../../.."
-S=$(mktemp -d); trap 'rm -rf "$S"' EXIT
+S=$(mktemp -d); trap 'rm -rf "$S"; resume_workers' EXIT
 API=http://localhost:3000/api/v1
 ADMIN_EMAIL=$(grep '^ADMIN_EMAIL=' .env | cut -d= -f2-); ADMIN_PASSWORD=$(grep '^ADMIN_PASSWORD=' .env | cut -d= -f2-)
 FAILS=0
 CELL_LAT=-16.7; CELL_LON=-49.3
+REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2-)
+# Workers parados durante o roteiro: a criação de safras enfileira backfill/processamento
+# (ETL real no CDS, runs extras) que alterariam o estado verificado aqui.
+purge_queues()   { for q in era5-ingest msa-process; do docker compose exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" EVAL "local n=0 for _,k in ipairs(redis.call('keys', ARGV[1])) do redis.call('del', k) n=n+1 end return n" 0 "bull:$q:*" >/dev/null 2>&1; done; }
+pause_workers()  { docker compose stop worker etl >/dev/null 2>&1; }
+resume_workers() { purge_queues; docker compose start worker etl >/dev/null 2>&1; }
 EMERGENCE=2025-11-01   # início fixo da série sintética (SYNTHETIC_SEASON_START)
 
 sql()   { docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$0"' "$1"; }
@@ -21,6 +27,7 @@ register_and_verify() { call POST /auth/register "" "{\"name\":\"$1\",\"email\":
 login() { call POST /auth/login "" "{\"email\":\"$1\",\"password\":\"$2\"}"; echo "$BODY" | j accessToken; }
 
 echo "== Preparação =="
+pause_workers
 sql "TRUNCATE msa_decisions, msa_daily_results, msa_phase_summaries" >/dev/null 2>&1
 sql "UPDATE harvests SET latest_run_id = NULL" >/dev/null 2>&1; sql "TRUNCATE msa_runs CASCADE" >/dev/null 2>&1
 sql "TRUNCATE harvests CASCADE" >/dev/null 2>&1; sql "TRUNCATE properties CASCADE" >/dev/null 2>&1
@@ -37,6 +44,7 @@ check "célula do talhão" "{\"lat\":$CELL_LAT,\"lon\":$CELL_LON}" "$(echo "$BOD
 call POST "/properties/$P/fields" "$ANA" "{\"name\":\"T-sem-altitude\",\"geometry\":$SQ}"; F2=$(echo "$BODY" | j id)
 SOJA=$(sql "SELECT id FROM cultivars WHERE is_default AND crop='SOJA'")
 call POST /harvests "$ANA" "{\"fieldId\":\"$F\",\"cultivarId\":\"$SOJA\",\"emergenceDate\":\"$EMERGENCE\",\"season\":\"2025/26\"}"; H=$(echo "$BODY" | j id); check "safra criada" 201 "$STATUS"
+check "criação enfileira o MSA (msaJobId)" 1 "$( [ -n "$(echo "$BODY" | j msaJobId)" ] && echo 1 || echo 0 )"
 call POST /harvests "$ANA" "{\"fieldId\":\"$F2\",\"cultivarId\":\"$SOJA\",\"emergenceDate\":\"$EMERGENCE\",\"season\":\"2025/26\"}"; H2=$(echo "$BODY" | j id)
 
 echo "== Série sintética (150 dias) via SQL para a célula =="
@@ -50,12 +58,16 @@ docker compose exec -T db sh -c 'psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"' 
 check "150 dias sintéticos na célula" 150 "$(sql "SELECT count(*) FROM era5_daily_data WHERE cell_lat=$CELL_LAT AND cell_lon=$CELL_LON AND source='synthetic'")"
 LAST_SYN=$(sql "SELECT max(time) FROM era5_daily_data WHERE source='synthetic'")
 
-echo "== Processamento =="
+echo "== Processamento (assíncrono por padrão; síncrono só para ADMIN via ?sync=true) =="
 call POST "/harvests/$H/msa/process" "$PEDRO";  check "produtor processa → 403" 403 "$STATUS"
-call POST "/harvests/$H2/msa/process" "$ANA";   check "talhão sem altitude → 422" 422 "$STATUS"; contains "código MISSING_FIELD_ALTITUDE" "$BODY" MISSING_FIELD_ALTITUDE
+call POST "/harvests/$H/msa/process" "$ANA";    check "agrônoma → 202 enfileirado" 202 "$STATUS"; check "fila msa-process, status queued" "msa-process|queued" "$(echo "$BODY" | j queue)|$(echo "$BODY" | j status)"
+check "jobId na resposta" 1 "$( [ -n "$(echo "$BODY" | j jobId)" ] && echo 1 || echo 0 )"
+call POST "/harvests/$H/msa/process?sync=true" "$ANA"; check "sync para agrônoma → 403 SYNC_ADMIN_ONLY" 403 "$STATUS"; contains "código SYNC_ADMIN_ONLY" "$BODY" SYNC_ADMIN_ONLY
+call POST "/harvests/$H2/msa/process?sync=true" "$ADMIN"; check "talhão sem altitude (sync) → 422" 422 "$STATUS"; contains "código MISSING_FIELD_ALTITUDE" "$BODY" MISSING_FIELD_ALTITUDE
 check "nenhuma run criada para o 422" 0 "$(sql "SELECT count(*) FROM msa_runs WHERE harvest_id='$H2'")"
 call GET "/harvests/$H/msa" "$ANA";             check "sem run → 404 NO_MSA_RESULT" 404 "$STATUS"; contains "código NO_MSA_RESULT" "$BODY" NO_MSA_RESULT
-call POST "/harvests/$H/msa/process?seed=42" "$ANA"; check "processamento → 201" 201 "$STATUS"
+call POST "/harvests/$H/msa/process?seed=42&sync=true" "$ADMIN"; check "processamento síncrono → 201" 201 "$STATUS"
+check "reason MANUAL, sem jobId" "MANUAL|null" "$(echo "$BODY" | j run.reason)|$(echo "$BODY" | j run.jobId)"
 RUN1=$(echo "$BODY" | j run.id)
 check "status SUCCEEDED" SUCCEEDED "$(echo "$BODY" | j run.status)"
 check "seed 42, 1000 iterações, sigmas padrão" "42|1000|0.3|0.6" "$(echo "$BODY" | j run.seed)|$(echo "$BODY" | j run.iterations)|$(echo "$BODY" | j run.sigmaPrecip)|$(echo "$BODY" | j run.sigmaTemp)"
@@ -81,14 +93,14 @@ call GET "/harvests/$H/msa" "$ADMIN";          check "admin lê → 200" 200 "$S
 
 echo "== Lacuna ⇒ NEEDS_DATA =="
 sql "DELETE FROM era5_daily_data WHERE source='synthetic' AND time IN ('2025-11-15','2025-11-16')" >/dev/null
-call POST "/harvests/$H/msa/process" "$ANA";   check "com lacuna → 200" 200 "$STATUS"; check "status NEEDS_DATA" NEEDS_DATA "$(echo "$BODY" | j run.status)"
+call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "com lacuna → 200" 200 "$STATUS"; check "status NEEDS_DATA" NEEDS_DATA "$(echo "$BODY" | j run.status)"
 check "missingDates" '["2025-11-15","2025-11-16"]' "$(echo "$BODY" | j run.missingDates)"
 check "latestRunId inalterado" "$RUN1" "$(sql "SELECT latest_run_id FROM harvests WHERE id='$H'")"
 call GET "/harvests/$H/msa/runs" "$ANA";       check "histórico com 2 runs" 2 "$(echo "$BODY" | j length)"; check "mais recente primeiro" NEEDS_DATA "$(echo "$BODY" | j 0.status)"
 echo "== Lacuna após o fim do ciclo não bloqueia =="
 docker compose exec -T db sh -c 'psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$S/insert.sql"   # repõe os dias
 AFTER=$(sql "SELECT (date '$TO1' + 3)::text"); sql "DELETE FROM era5_daily_data WHERE source='synthetic' AND time = '$AFTER'" >/dev/null
-call POST "/harvests/$H/msa/process?seed=42" "$ANA"; check "lacuna depois de dateTo → 201" 201 "$STATUS"; RUN3=$(echo "$BODY" | j run.id)
+call POST "/harvests/$H/msa/process?seed=42&sync=true" "$ADMIN"; check "lacuna depois de dateTo → 201" 201 "$STATUS"; RUN3=$(echo "$BODY" | j run.id)
 check "mesmo dateTo" "$TO1" "$(echo "$BODY" | j run.dateTo)"
 docker compose exec -T db sh -c 'psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$S/insert.sql"
 
@@ -100,7 +112,7 @@ D1=$(sql "SELECT md5(string_agg(date||':'||ks||':'||dr||':'||et0, '|' ORDER BY d
 D3=$(sql "SELECT md5(string_agg(date||':'||ks||':'||dr||':'||et0, '|' ORDER BY date)) FROM msa_daily_results WHERE run_id='$RUN3'")
 check "série baseline idêntica" "$D1" "$D3"
 echo "      $S1"
-call POST "/harvests/$H/msa/process" "$ANA"; check "sem seed → semente gerada" 1 "$( [ -n "$(echo "$BODY" | j run.seed)" ] && echo 1 || echo 0 )"
+call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "sem seed → semente gerada" 1 "$( [ -n "$(echo "$BODY" | j run.seed)" ] && echo 1 || echo 0 )"
 check "latestRunId = run mais recente SUCCEEDED" "$(echo "$BODY" | j run.id)" "$(sql "SELECT latest_run_id FROM harvests WHERE id='$H'")"
 
 echo "== Decisão =="

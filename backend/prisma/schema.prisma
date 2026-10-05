@@ -258,6 +258,10 @@ model Era5IngestionRun {
   rowsUpserted   Int?            @map("rows_upserted")
   cdsRequestId   String?         @map("cds_request_id")
   error          String?
+  /// Id do job BullMQ (nulo em execuções pelo CLI)
+  jobId          String?         @map("job_id")
+  /// Heartbeat: atualizado pelo ETL a cada mês concluído; runs RUNNING paradas há > 6 h viram órfãs
+  updatedAt      DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   @@index([startedAt])
   @@map("era5_ingestion_runs")
@@ -277,6 +281,15 @@ enum MsaScenario {
   C
 
   @@map("msa_scenario")
+}
+
+/// Origem de uma run do MSA: ciclo semanal, backfill ao criar a safra ou disparo manual.
+enum MsaRunReason {
+  WEEKLY
+  BACKFILL
+  MANUAL
+
+  @@map("msa_run_reason")
 }
 
 /// Uma execução do MSA para uma safra. Guarda tudo o que é preciso para
@@ -303,6 +316,9 @@ model MsaRun {
   missingDates     Json?        @map("missing_dates")
   error            String?
   triggeredById    String?      @map("triggered_by_id") @db.Uuid
+  reason           MsaRunReason @default(MANUAL)
+  /// Id do job BullMQ que gerou a run (nulo em runs inline)
+  jobId            String?      @map("job_id")
 
   harvest        Harvest           @relation("HarvestRuns", fields: [harvestId], references: [id], onDelete: Cascade)
   latestOf       Harvest?          @relation("HarvestLatestRun")

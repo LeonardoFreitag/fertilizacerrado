@@ -50,8 +50,8 @@ Produto principal da dissertação. Processa dados ERA5-Land e entrega suporte �
 | API Backend | Node.js 20 + TypeScript + Express | Tipagem estrita, ecossistema maduro |
 | ORM | Prisma 5 | Migrations versionadas, type-safety |
 | Banco de dados | PostgreSQL 15 + PostGIS + TimescaleDB — imagem `timescale/timescaledb-ha:pg15` | Dados geoespaciais (talhões) e séries temporais (ERA5-Land); uma única imagem traz as duas extensões |
-| Fila / Concorrência | BullMQ + Redis 7 | Jobs de Monte Carlo e ETL fora do event loop |
-| Pipeline ETL | Python 3.12 (cdsapi, xarray, netCDF4, pandas, psycopg) em contêiner próprio (`backend/etl`, profile `etl` do Compose) | Download no CDS, agregação diária e carga por célula na hipertabela `era5_daily_data` |
+| Fila / Concorrência | BullMQ 5 (Node) + `bullmq` (PyPI) + Redis 7 (`noeviction`) | Processo `worker` (filas `msa-process`, `msa-weekly`, scheduler semanal) separado das réplicas da API; flows ligam o ingest Python ao processamento Node |
+| Pipeline ETL | Python 3.12 (cdsapi, xarray, netCDF4, pandas, psycopg, bullmq) em contêiner próprio (`backend/etl`, serviço `etl` sempre no ar como worker da fila `era5-ingest`) | Download no CDS por mês/trimestre com cache, agregação diária e carga por célula na hipertabela `era5_daily_data` |
 | Frontend | React + TailwindCSS | Interface do técnico agrônomo |
 | Proxy / LB | Nginx 1.25 | Reverse proxy, rate limiting, TLS |
 | Containers | Docker + Docker Compose | Ambiente reprodutível |
@@ -72,12 +72,16 @@ Produto principal da dissertação. Processa dados ERA5-Land e entrega suporte �
   └── Carga em lote → PostgreSQL / TimescaleDB
         │
         ▼
-[Backend Node.js / TypeScript]
+[BullMQ / Redis]  scheduler semanal (seg 02:00 BRT) · backfill ao criar safra · admin
+  flow: era5-ingest (Python) → msa-process (Node)
+        │
+        ▼
+[Processo worker Node.js / TypeScript]  (a API só enfileira)
   ├── Acúmulo de GDA → Projeção das janelas F1–F4
   ├── ET₀ diária (FAO-56 Penman-Monteith)
   ├── Balanço hídrico diário (TAW, RAW, Dr, Ks)
-  └── BullMQ: Motor de Monte Carlo (1.000 iterações)
-        │  P10 / P50 / P90 por janela fenológica
+  └── Motor de Monte Carlo (1.000 iterações)
+        │  P10 / P50 / P90 por janela fenológica → msa_runs (reason, jobId)
         ▼
 [React Frontend]
   ├── Painel de janelas fenológicas e histórico hídrico
@@ -112,15 +116,18 @@ FertilizaCerrado/
 │   │   │   ├── properties/        # Propriedades e Talhões
 │   │   │   ├── cultivars/
 │   │   │   ├── harvests/          # Safras
+│   │   │   ├── jobs/              # Filas BullMQ: flows, ids, enfileiramento, /admin/jobs
 │   │   │   ├── msa/
 │   │   │   │   └── engine/        # Motor de cálculo: funções puras (GDA, ET₀, Kc, balanço, FAO-33)
 │   │   │   ├── soil-analysis/
 │   │   │   └── recommendations/
 │   │   ├── middleware/
 │   │   ├── utils/
-│   │   └── config/
+│   │   ├── config/
+│   │   ├── server.ts              # Processo API (réplicas)
+│   │   └── worker.ts              # Processo worker (1 réplica): consumidores BullMQ + scheduler
 │   ├── prisma/
-│   ├── etl/                       # Serviço Python 3.12 (contêiner próprio): ingestão ERA5-Land → TimescaleDB
+│   ├── etl/                       # Serviço Python 3.12 (contêiner próprio): worker era5-ingest + CLI → TimescaleDB
 │   └── Dockerfile
 ├── frontend/
 ├── nginx/
