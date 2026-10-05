@@ -52,8 +52,8 @@ Produto principal da dissertação. Processa dados ERA5-Land e entrega suporte �
 | Banco de dados | PostgreSQL 15 + PostGIS + TimescaleDB — imagem `timescale/timescaledb-ha:pg15` | Dados geoespaciais (talhões) e séries temporais (ERA5-Land); uma única imagem traz as duas extensões |
 | Fila / Concorrência | BullMQ 5 (Node) + `bullmq` (PyPI) + Redis 7 (`noeviction`) | Processo `worker` (filas `msa-process`, `msa-weekly`, scheduler semanal) separado das réplicas da API; flows ligam o ingest Python ao processamento Node |
 | Pipeline ETL | Python 3.12 (cdsapi, xarray, netCDF4, pandas, psycopg, bullmq) em contêiner próprio (`backend/etl`, serviço `etl` sempre no ar como worker da fila `era5-ingest`) | Download no CDS por mês/trimestre com cache, agregação diária e carga por célula na hipertabela `era5_daily_data` |
-| Frontend | React + TailwindCSS | Interface do técnico agrônomo |
-| Proxy / LB | Nginx 1.25 | Reverse proxy, rate limiting, TLS |
+| Frontend | React 18 + Vite + TypeScript + TailwindCSS (react-router, TanStack Query, react-hook-form/zod, react-leaflet + geoman) | SPA em `frontend/` (`docs/modulos/frontend.md`); em dev, serviço `frontend` (Vite) atrás do Nginx; em prod, estáticos copiados para a imagem do nginx (`fertiliza-web`) |
+| Proxy / LB | Nginx 1.25 | Reverse proxy da API, rate limiting, TLS; serve a SPA (dev: proxy para o Vite com WebSocket; prod: estáticos com fallback `index.html`) |
 | Containers | Docker + Docker Compose | Ambiente reprodutível |
 | Gerenciador pacotes | pnpm | Economia de espaço em disco, lockfile estrito |
 | Nuvem (produção) | AWS (EC2 → ECS Fargate → EKS) | Escala gradual conforme demanda |
@@ -83,7 +83,8 @@ Produto principal da dissertação. Processa dados ERA5-Land e entrega suporte �
   └── Motor de Monte Carlo (1.000 iterações)
         │  P10 / P50 / P90 por janela fenológica → msa_runs (reason, jobId)
         ▼
-[React Frontend]
+[React Frontend — SPA atrás do mesmo Nginx (/ → SPA, /api → API)]
+  ├── Autenticação (token em memória + refresh por cookie HttpOnly), propriedades e talhões no mapa
   ├── Painel de janelas fenológicas e histórico hídrico
   ├── Indicador de estresse por janela (Ks médio)
   └── Painel de escolha do técnico: cenário a / b / c
@@ -129,12 +130,12 @@ FertilizaCerrado/
 │   ├── prisma/
 │   ├── etl/                       # Serviço Python 3.12 (contêiner próprio): worker era5-ingest + CLI → TimescaleDB
 │   └── Dockerfile
-├── frontend/
+├── frontend/                      # SPA React + Vite (src/app, lib, components, features; e2e Playwright; Dockerfile → nginx)
 ├── nginx/
 ├── infra/
 ├── docs/
 │   ├── arquitetura.md             ← este arquivo
-│   ├── modulos/
+│   ├── modulos/                   # auth, propriedades, msa, frontend
 │   └── msa/
 ├── openspec/
 ├── docker-compose.yml

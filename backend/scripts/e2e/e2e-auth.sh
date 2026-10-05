@@ -38,7 +38,7 @@ sql "TRUNCATE properties CASCADE" >/dev/null 2>&1; sql "DELETE FROM cultivars WH
 echo "== Cadastro =="
 REG='{"name":"Maria Silva","email":"Maria@Fazenda.com","password":"MinhaS3nha!","role":"AGRONOMO","cpf":"529.982.247-25","crea":"CREA-GO 12345"}'
 call POST /register "$REG";                                              check "cadastro válido → 201" 201 "$STATUS"
-sleep 0.3; VTOKEN=$(last_token 'verify-email/')   # token recém-emitido para a Maria (lido do log da API)
+sleep 0.3; VTOKEN=$(last_token 'verificar-email/')   # token recém-emitido para a Maria (lido do log da API)
 contains "resposta traz dados públicos" "$BODY" '"role":"AGRONOMO"'
 lacks "resposta sem campos sensíveis" "$BODY" 'passwordHash\|refreshToken\|resetToken\|accessToken'
 call POST /register "${REG/Maria@Fazenda.com/MARIA@fazenda.COM}";        check "e-mail duplicado (outra capitalização) → 409" 409 "$STATUS"
@@ -133,14 +133,14 @@ call POST /logout "";                                                    check "
 echo "== Recuperação de senha =="
 login maria@fazenda.com 'MinhaS3nha!'; cp "$S/jar.txt" "$S/jar-prereset.txt"
 call POST /forgot-password '{"email":"maria@fazenda.com"}';              check "forgot (conta existente) → 200" 200 "$STATUS"; FB=$BODY
-TOKEN1=$(last_token 'reset-password?token=')
+TOKEN1=$(last_token 'redefinir-senha?token=')
 call POST /forgot-password '{"email":"ninguem@fazenda.com"}';            check "forgot (conta inexistente) → 200" 200 "$STATUS"
 check "mesma resposta nos dois casos" "$FB" "$BODY"
 check "token de 32 bytes (64 hex)" 64 "${#TOKEN1}"
 check "banco guarda o SHA-256 do token" "$(printf %s "$TOKEN1" | shasum -a 256 | cut -d' ' -f1)" "$(sql "SELECT reset_token FROM users WHERE email='maria@fazenda.com'")"
 check "expiração em 1 hora" t "$(sql "SELECT reset_token_expires_at BETWEEN now() + interval '59 minutes' AND now() + interval '61 minutes' FROM users WHERE email='maria@fazenda.com'")"
 call POST /forgot-password '{"email":"maria@fazenda.com"}'
-TOKEN2=$(last_token 'reset-password?token=')
+TOKEN2=$(last_token 'redefinir-senha?token=')
 call POST /reset-password "{\"token\":\"$TOKEN1\",\"password\":\"NovaS3nha!\"}"; check "token substituído por novo pedido → 400" 400 "$STATUS"
 call POST /reset-password "{\"token\":\"$TOKEN2\",\"password\":\"fraca\"}";      check "nova senha fraca → 400" 400 "$STATUS"
 call POST /reset-password "{\"token\":\"$TOKEN2\",\"password\":\"NovaS3nha!\"}"; check "reset válido (token continuou válido após senha fraca) → 200" 200 "$STATUS"
@@ -149,13 +149,13 @@ call POST /refresh "" -b "$S/jar-prereset.txt";                          check "
 login maria@fazenda.com 'MinhaS3nha!';                                   check "senha antiga → 401" 401 "$STATUS"
 login maria@fazenda.com 'NovaS3nha!';                                    check "senha nova → 200" 200 "$STATUS"
 call POST /forgot-password '{"email":"maria@fazenda.com"}'
-TOKEN3=$(last_token 'reset-password?token=')
+TOKEN3=$(last_token 'redefinir-senha?token=')
 sql "UPDATE users SET reset_token_expires_at = now() - interval '1 minute' WHERE email='maria@fazenda.com'" >/dev/null
 call POST /reset-password "{\"token\":\"$TOKEN3\",\"password\":\"Expirada1!\"}"; check "token expirado → 400" 400 "$STATUS"
 login maria@fazenda.com 'NovaS3nha!';                                    check "senha não mudou com token expirado" 200 "$STATUS"
 # conta nunca verificada recuperada pelo reset
 call POST /forgot-password '{"email":"pj@fazenda.com"}'
-TOKEN4=$(last_token 'reset-password?token=')
+TOKEN4=$(last_token 'redefinir-senha?token=')
 call POST /reset-password "{\"token\":\"$TOKEN4\",\"password\":\"NovaS3nha!\"}"; check "reset de conta não verificada → 200" 200 "$STATUS"
 check "reset marca e-mail como verificado" "t|t" "$(sql "SELECT email_verified, email_verified_at IS NOT NULL FROM users WHERE email='pj@fazenda.com'")"
 login pj@fazenda.com 'NovaS3nha!';                                       check "login da conta recuperada → 200" 200 "$STATUS"

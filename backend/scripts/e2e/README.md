@@ -16,7 +16,7 @@ Scripts `bash` + `curl` que exercitam a API real contra a stack do Docker Compos
 - Stack no ar: `docker compose up -d` na raiz do repositório (API em `localhost:3000`, Nginx em `localhost:80`), incluindo os serviços `worker` e `etl` para o `e2e-orchestration.sh`.
 - Para o `e2e-orchestration.sh`: cache do ETL (volume `etl_cache`) com os meses da célula de teste (−16,7; −49,3), de 2025-10 até o mês corrente — populado por uma ingestão real anterior (`e2e-era5.sh` com `ERA5_E2E_BACKFILL=1` ou `docker compose run --rm etl ingest --from … --to …`). Sem `ERA5_E2E_CDS=1`, o roteiro trata o cache como baixado hoje (`touch`) para não ir ao CDS.
 - `.env` na raiz com `ADMIN_EMAIL` e `ADMIN_PASSWORD` definidos e o seed executado: `cd backend && pnpm prisma db seed`. Os roteiros de propriedades e de cultivares/safras fazem login com esse administrador, e o de cultivares/safras depende das duas cultivares de referência criadas pelo seed.
-- Sem `SMTP_HOST` no `.env`: os roteiros leem os links de verificação e de recuperação de senha no log da API (`docker compose logs api`).
+- Sem `SMTP_HOST` no `.env`: os roteiros leem os links de verificação e de recuperação de senha no log da API (`docker compose logs api`). Os links apontam para as páginas do frontend (`${FRONTEND_URL}/verificar-email/<token>` e `/redefinir-senha?token=<token>`); os roteiros extraem o token e chamam a API diretamente.
 - No host: `bash`, `curl`, `node`, `shasum` e `docker compose`.
 
 ## Como rodar
@@ -31,6 +31,8 @@ bash backend/scripts/e2e/e2e-era5.sh          # opcional, exige CDS_API_KEY
 ```
 
 Rode-os em sequência, não em paralelo: compartilham o banco.
+
+O smoke do frontend (Playwright) fica em `frontend/e2e/` e roda com `cd frontend && pnpm e2e`, também contra a stack de dev (ver `docs/modulos/frontend.md`).
 
 Cada linha sai como `PASS` ou `FAIL` com o esperado e o obtido; o final mostra `FALHAS: N`. Para ver só o que falhou:
 

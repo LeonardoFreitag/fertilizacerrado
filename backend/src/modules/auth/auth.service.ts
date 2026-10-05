@@ -155,6 +155,13 @@ export const authService = {
     return session;
   },
 
+  /** Perfil do usuário autenticado (restauração da sessão no frontend). */
+  async me(userId: string): Promise<PublicUser> {
+    const user = await authRepository.findById(userId);
+    if (!user) throw new AppError(401, 'UNAUTHORIZED', 'Usuário não encontrado.');
+    return toPublicUser(user);
+  },
+
   async logout(refreshToken: string | undefined): Promise<void> {
     const userId = refreshToken ? verifyRefreshToken(refreshToken) : null;
     if (!refreshToken || !userId) return;

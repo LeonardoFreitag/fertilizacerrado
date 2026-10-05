@@ -127,7 +127,12 @@ Redefine a senha usando o token de recuperação.
 ---
 
 ### GET /api/v1/auth/verify-email/:token
-Confirma o e-mail do usuário.
+Confirma o e-mail do usuário. O link do e-mail aponta para a página do frontend `${FRONTEND_URL}/verificar-email/<token>`, que chama este endpoint e mostra o resultado (o link de recuperação de senha, análogo, vai para `${FRONTEND_URL}/redefinir-senha?token=<token>`).
+
+---
+
+### GET /api/v1/auth/me
+Perfil do usuário autenticado (`id`, `name`, `email`, `role`); 401 sem access token válido. O frontend usa após o `refresh` para restaurar a sessão ao recarregar a página — o refresh devolve só o token e o JWT carrega apenas `sub` e `role`.
 
 ---
 

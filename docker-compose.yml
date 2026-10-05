@@ -77,6 +77,26 @@ services:
       redis:
         condition: service_healthy
 
+  # SPA (Vite dev server com HMR). Dependências instaladas no primeiro boot, no volume
+  # anônimo de node_modules (não polui o host). Acesse por http://localhost (Nginx).
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install --frozen-lockfile && pnpm dev --host"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+      VITE_DEV_API_PROXY: http://api:3000
+      # store do pnpm fora do diretório montado (senão viraria frontend/.pnpm-store no host)
+      npm_config_store_dir: /pnpm-store
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_pnpm_store:/pnpm-store
+    depends_on:
+      - api
+
   nginx:
     image: nginx:1.25-alpine
     ports:
@@ -85,6 +105,7 @@ services:
       - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - api
+      - frontend
 
   # ETL ERA5-Land (Python). Não é daemon: `docker compose run --rm etl <comando>`.
   # O profile impede que `docker compose up` o construa/inicie.
@@ -121,3 +142,5 @@ volumes:
   postgres_data:
   redis_data:
   etl_cache:
+  frontend_node_modules:
+  frontend_pnpm_store:

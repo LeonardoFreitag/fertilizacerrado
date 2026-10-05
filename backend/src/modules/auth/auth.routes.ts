@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { authenticate } from '../../middleware/auth.middleware';
 import { authController } from './auth.controller';
 
 export const authRoutes = Router();
@@ -10,3 +11,4 @@ authRoutes.post('/logout', authController.logout);
 authRoutes.post('/forgot-password', authController.forgotPassword);
 authRoutes.post('/reset-password', authController.resetPassword);
 authRoutes.get('/verify-email/:token', authController.verifyEmail);
+authRoutes.get('/me', authenticate, authController.me);

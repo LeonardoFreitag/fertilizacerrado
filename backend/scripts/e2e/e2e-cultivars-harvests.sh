@@ -30,7 +30,7 @@ call() {
 check()    { if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1 (esperado: $2, obtido: $3)  ${BODY:0:220}"; FAILS=$((FAILS+1)); fi; }
 contains() { if echo "$2" | grep -q -- "$3"; then echo "PASS  $1"; else echo "FAIL  $1 (não contém: $3)  ${2:0:220}"; FAILS=$((FAILS+1)); fi; }
 lacks()    { if echo "$2" | grep -q -- "$3"; then echo "FAIL  $1 (contém: $3)"; FAILS=$((FAILS+1)); else echo "PASS  $1"; fi; }
-last_verify_token() { docker compose logs --no-log-prefix api 2>/dev/null | grep -o 'verify-email/[A-Za-z0-9._-]*' | tail -1 | sed 's|verify-email/||'; }
+last_verify_token() { docker compose logs --no-log-prefix api 2>/dev/null | grep -o 'verificar-email/[A-Za-z0-9._-]*' | tail -1 | sed 's|verificar-email/||'; }
 
 register_and_verify() { # NAME EMAIL ROLE CPF -> echoes user id
   call POST /auth/register "" "{\"name\":\"$1\",\"email\":\"$2\",\"password\":\"MinhaS3nha!\",\"role\":\"$3\",\"cpf\":\"$4\"}"

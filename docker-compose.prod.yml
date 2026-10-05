@@ -167,8 +167,9 @@ services:
       - backend_net
       - frontend_net
 
+  # Nginx + estáticos da SPA (frontend/Dockerfile). A configuração continua montada do repositório.
   nginx:
-    image: nginx:1.25-alpine
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_WEB:-fertiliza-web}:${IMAGE_TAG:-latest}
     restart: always
     ports:
       - "80:80"

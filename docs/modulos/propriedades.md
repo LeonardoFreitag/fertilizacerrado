@@ -87,6 +87,7 @@ Todas as rotas exigem `Authorization: Bearer <access token>`.
 | PATCH | `/api/v1/properties/:propertyId/fields/:id` | Atualização parcial | AGRONOMO, ADMIN |
 | DELETE | `/api/v1/properties/:propertyId/fields/:id` | Remove talhão (físico; `era5_cells` em cascata; 409 se houver safras) | AGRONOMO, ADMIN |
 | GET | `/api/v1/properties/:propertyId/fields/:fieldId/harvests` | Lista safras do talhão (módulo de Safras) | Todos |
+| GET | `/api/v1/users?q=&role=&limit=` | Diretório mínimo para escolher o produtor dono: ADMIN pesquisa qualquer role (com ou sem `q`); AGRONOMO só `PRODUTOR` com `q` ≥ 3 caracteres (403 para outra role, 400 sem termo); PRODUTOR 403. Até 50 (padrão 20), ordem por nome | AGRONOMO, ADMIN |
 
 Resposta de talhão: `id`, `name`, `propertyId`, `areaHa` (número), `geometry` (GeoJSON `Polygon`), `centroid` (GeoJSON `Point`), `soilType`, `notes`, `era5Cell` (`{ lat, lon }`), `createdAt`, `updatedAt`.
 

@@ -26,7 +26,8 @@ async function sendMail(to: string, subject: string, text: string): Promise<void
 }
 
 export async function sendVerificationEmail(to: string, name: string, token: string): Promise<void> {
-  const link = `${env.APP_URL}/api/v1/auth/verify-email/${token}`;
+  // Página do frontend, que chama GET /api/v1/auth/verify-email/:token
+  const link = `${env.FRONTEND_URL}/verificar-email/${token}`;
   await sendMail(
     to,
     'Confirme seu e-mail — FertilizaCerrado',
@@ -35,7 +36,7 @@ export async function sendVerificationEmail(to: string, name: string, token: str
 }
 
 export async function sendPasswordResetEmail(to: string, name: string, token: string): Promise<void> {
-  const link = `${env.FRONTEND_URL}/reset-password?token=${token}`;
+  const link = `${env.FRONTEND_URL}/redefinir-senha?token=${token}`;
   await sendMail(
     to,
     'Recuperação de senha — FertilizaCerrado',

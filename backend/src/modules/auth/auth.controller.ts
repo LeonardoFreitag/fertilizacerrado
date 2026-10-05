@@ -1,5 +1,6 @@
 import type { CookieOptions, Request, Response } from 'express';
 import { env } from '../../config/env';
+import { AppError } from '../../utils/app-error';
 import type { SignedToken } from '../../utils/token.util';
 import { authService } from './auth.service';
 import { forgotPasswordSchema } from './dtos/forgot-password.dto';
@@ -92,5 +93,10 @@ export const authController = {
     await authService.verifyEmail(String(req.params.token));
 
     res.status(200).json({ message: 'E-mail verificado com sucesso.' });
+  },
+
+  async me(req: Request, res: Response): Promise<void> {
+    if (!req.user) throw new AppError(401, 'UNAUTHORIZED', 'Token de acesso ausente ou inválido.');
+    res.status(200).json(await authService.me(req.user.id));
   },
 };

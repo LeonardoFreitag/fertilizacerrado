@@ -57,7 +57,7 @@ O cadastro SHALL exigir ao menos um entre `cpf` e `cnpj`. Quando `personType` é
 - **THEN** a resposta é 409 e nenhuma conta é criada
 
 ### Requirement: Verificação de e-mail
-O sistema SHALL confirmar o e-mail em `GET /api/v1/auth/verify-email/:token`. O token MUST ser assinado pelo servidor, específico para verificação de e-mail e válido por 24 horas. Em sucesso o sistema SHALL marcar `emailVerified` como verdadeiro e registrar `emailVerifiedAt`.
+O sistema SHALL confirmar o e-mail em `GET /api/v1/auth/verify-email/:token`. O token MUST ser assinado pelo servidor, específico para verificação de e-mail e válido por 24 horas. Em sucesso o sistema SHALL marcar `emailVerified` como verdadeiro e registrar `emailVerifiedAt`. O link enviado por e-mail MUST apontar para a página do frontend `${FRONTEND_URL}/verificar-email/<token>`, que chama o endpoint.
 
 #### Scenario: Token válido
 - **WHEN** o usuário acessa o link com um token válido
@@ -74,6 +74,10 @@ O sistema SHALL confirmar o e-mail em `GET /api/v1/auth/verify-email/:token`. O 
 #### Scenario: Access token usado como token de verificação
 - **WHEN** um access token válido é enviado no lugar do token de verificação
 - **THEN** a resposta é 400
+
+#### Scenario: Link do e-mail
+- **WHEN** o e-mail de verificação é gerado com `FRONTEND_URL=http://localhost`
+- **THEN** o link é `http://localhost/verificar-email/<token>`
 
 ### Requirement: Login
 O sistema SHALL autenticar em `POST /api/v1/auth/login` com `email` e `password`. Em sucesso SHALL responder 200 com `accessToken` e os dados `id`, `name`, `email` e `role` do usuário, e SHALL gravar o refresh token em um cookie `HttpOnly`. O access token MUST ser um JWT HS256 com validade de 15 minutos. O refresh token MUST ter validade de 7 dias e MUST NOT aparecer no corpo da resposta. Contas com e-mail não verificado MUST NOT receber tokens.
@@ -164,11 +168,11 @@ O sistema SHALL encerrar a sessão em `POST /api/v1/auth/logout`, apagando o has
 - **THEN** a resposta é 204
 
 ### Requirement: Solicitação de recuperação de senha
-O sistema SHALL aceitar `POST /api/v1/auth/forgot-password` com `email` e SHALL responder 200 com a mesma mensagem exista ou não a conta. Quando a conta existe, o sistema SHALL gerar um token de 32 bytes aleatórios criptograficamente seguros, armazenar apenas seu hash SHA-256 com expiração de 1 hora e enviar o token bruto por e-mail.
+O sistema SHALL aceitar `POST /api/v1/auth/forgot-password` com `email` e SHALL responder 200 com a mesma mensagem exista ou não a conta. Quando a conta existe, o sistema SHALL gerar um token de 32 bytes aleatórios criptograficamente seguros, armazenar apenas seu hash SHA-256 com expiração de 1 hora e enviar o token bruto por e-mail em um link para `${FRONTEND_URL}/redefinir-senha?token=<token>`.
 
 #### Scenario: Conta existente
 - **WHEN** o e-mail pertence a uma conta
-- **THEN** a resposta é 200, `resetToken` guarda o hash SHA-256 do token, `resetTokenExpiresAt` fica 1 hora à frente e um e-mail com o link de redefinição é enviado
+- **THEN** a resposta é 200, `resetToken` guarda o hash SHA-256 do token, `resetTokenExpiresAt` fica 1 hora à frente e um e-mail com o link `${FRONTEND_URL}/redefinir-senha?token=<token>` é enviado
 
 #### Scenario: Conta inexistente
 - **WHEN** o e-mail não pertence a nenhuma conta
@@ -250,3 +254,14 @@ O sistema SHALL fornecer um seed em `prisma/seed.ts`, registrado em `package.jso
 #### Scenario: E-mail já usado por outro role
 - **WHEN** existe um usuário com `ADMIN_EMAIL` e `role` diferente de `ADMIN`
 - **THEN** o seed atualiza esse usuário para `ADMIN`, verificado, com a senha informada
+
+### Requirement: Perfil do usuário autenticado
+O sistema SHALL responder `GET /api/v1/auth/me`, autenticado por access token, com `id`, `name`, `email` e `role` do usuário. Sem token válido a resposta MUST ser 401.
+
+#### Scenario: Token válido
+- **WHEN** um usuário autenticado chama `GET /auth/me`
+- **THEN** recebe 200 com `id`, `name`, `email` e `role`, sem `passwordHash` nem tokens
+
+#### Scenario: Sem token
+- **WHEN** `GET /auth/me` é chamado sem `Authorization`
+- **THEN** a resposta é 401

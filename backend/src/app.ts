@@ -10,6 +10,7 @@ import { cultivarRoutes } from './modules/cultivars/cultivar.routes';
 import { harvestRoutes } from './modules/harvests/harvest.routes';
 import { jobsRoutes } from './modules/jobs/jobs.routes';
 import { propertyRoutes } from './modules/properties/property.routes';
+import { userRoutes } from './modules/users/user.routes';
 import { AppError } from './utils/app-error';
 
 export const app = express();
@@ -35,6 +36,7 @@ app.get('/health', (_req: Request, res: Response) => {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/properties', propertyRoutes);
+app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/cultivars', cultivarRoutes);
 app.use('/api/v1/harvests', harvestRoutes);
 app.use('/api/v1/admin/jobs', jobsRoutes);
