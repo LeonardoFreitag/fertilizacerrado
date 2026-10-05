@@ -1,0 +1,161 @@
+# Produção.
+#
+# - Requer a imagem publicada no ECR e certificados TLS em ./nginx/ssl
+#   (fullchain.pem e privkey.pem).
+# - deploy.replicas e deploy.resources são aplicados pelo `docker compose up`,
+#   mas deploy.update_config (rolling update start-first) só é honrado em
+#   Swarm (`docker stack deploy`).
+# - O serviço api não define container_name nem publica portas, permitindo
+#   `docker compose -f docker-compose.prod.yml up -d --scale api=3`.
+
+services:
+  db:
+    image: timescale/timescaledb-ha:pg15
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+      - ./backend/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend_net
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend_net
+
+  api:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG:-latest}
+    restart: always
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    stop_grace_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend_net
+      - frontend_net
+
+  # ETL ERA5-Land: `docker compose -f docker-compose.prod.yml run --rm etl ingest --latest`.
+  # Precisa do banco (backend_net) e de saída para o CDS (frontend_net).
+  etl:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_ETL:-fertiliza-etl}:${IMAGE_TAG:-latest}
+    profiles: ["etl"]
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
+      CDS_API_KEY: ${CDS_API_KEY:-}
+      ETL_CACHE_DIR: /data/cache
+    volumes:
+      - etl_cache:/data/cache
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend_net
+      - frontend_net
+
+  nginx:
+    image: nginx:1.25-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/certbot:/var/www/certbot:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - api
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - frontend_net
+
+networks:
+  # internal: sem rota para fora — db e redis ficam isolados
+  backend_net:
+    internal: true
+  frontend_net:
+
+volumes:
+  postgres_data:
+  redis_data:
+  nginx_logs:
+  etl_cache:

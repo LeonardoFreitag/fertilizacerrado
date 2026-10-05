@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+nginx/ssl/
+nginx/certbot/
+*.log
+.DS_Store
+
+# Saídas do script de validação de ET₀
+*.comparison.csv
+
+# Cache local de NetCDF do ETL (fora do Docker)
+backend/etl/cache/
+__pycache__/
+.pytest_cache/
+
+# NetCDF baixados do CDS (o cache fica no volume etl_cache; fora do Docker, em backend/etl/cache).
+# A fixture sintética de teste é versionada.
+*.nc
+*.nc.part
+!backend/etl/tests/fixtures/*.nc
+
+# Material bibliográfico de apoio (PDFs/DOCX de terceiros, ~1,8 GB) — não é código
+MaterialTeoricoApoio/

@@ -1,0 +1,95 @@
+services:
+  db:
+    image: timescale/timescaledb-ha:pg15
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+      # Executado apenas na primeira inicialização do volume
+      - ./backend/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      target: builder
+    command: sh -c "pnpm prisma migrate deploy && pnpm exec ts-node-dev --respawn --transpile-only src/server.ts"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend/src:/app/src:ro
+      - ./backend/prisma:/app/prisma:ro
+    stop_grace_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+
+  # ETL ERA5-Land (Python). Não é daemon: `docker compose run --rm etl <comando>`.
+  # O profile impede que `docker compose up` o construa/inicie.
+  etl:
+    build: ./backend/etl
+    profiles: ["etl"]
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
+      CDS_API_KEY: ${CDS_API_KEY:-}
+      ETL_CACHE_DIR: /data/cache
+    volumes:
+      - etl_cache:/data/cache
+    depends_on:
+      db:
+        condition: service_healthy
+
+  adminer:
+    image: adminer:4-standalone
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  etl_cache:

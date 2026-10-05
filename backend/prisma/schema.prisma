@@ -1,0 +1,389 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  AGRONOMO
+  PRODUTOR
+
+  @@map("role")
+}
+
+model User {
+  id                  String    @id @default(uuid()) @db.Uuid
+  email               String    @unique
+  passwordHash        String    @map("password_hash")
+  role                Role
+  name                String
+  cpf                 String?   @unique
+  cnpj                String?   @unique
+  crea                String?
+  phone               String?
+  emailVerified       Boolean   @default(false) @map("email_verified")
+  emailVerifiedAt     DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  /// Hash SHA-256 do token de recuperação de senha
+  resetToken          String?   @map("reset_token")
+  resetTokenExpiresAt DateTime? @map("reset_token_expires_at") @db.Timestamptz(3)
+  /// Hash SHA-256 do último refresh token emitido
+  refreshToken        String?   @map("refresh_token")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  ownedProperties      Property[] @relation("PropertyOwner")
+  supervisedProperties Property[] @relation("PropertyAgronomist")
+  cultivars            Cultivar[]
+  msaRuns              MsaRun[]
+  msaDecisions         MsaDecision[]
+
+  @@index([resetToken])
+  @@map("users")
+}
+
+model Property {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String
+  /// Sigla da UF
+  state        String    @db.Char(2)
+  city         String
+  /// Cadastro Ambiental Rural
+  car          String?
+  /// Número do Imóvel Rural na Receita Federal
+  nirf         String?
+  ownerId      String    @map("owner_id") @db.Uuid
+  agronomistId String?   @map("agronomist_id") @db.Uuid
+  /// Soft delete: propriedade excluída fica invisível na API
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner      User    @relation("PropertyOwner", fields: [ownerId], references: [id])
+  agronomist User?   @relation("PropertyAgronomist", fields: [agronomistId], references: [id])
+  fields     Field[]
+
+  @@index([ownerId])
+  @@index([agronomistId])
+  @@map("properties")
+}
+
+/// Talhão. As colunas geográficas são Unsupported: o Prisma Client não gera
+/// create/update para este model, e toda escrita/leitura delas é feita em SQL
+/// parametrizado no property.repository.
+model Field {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  propertyId String   @map("property_id") @db.Uuid
+  /// Área em hectares (informada ou ST_Area/10000)
+  areaHa     Decimal  @map("area_ha") @db.Decimal(12, 2)
+  geometry   Unsupported("geography(Polygon,4326)")
+  /// ST_Centroid(geometry), recalculado a cada alteração da geometria
+  centroid   Unsupported("geography(Point,4326)")
+  soilType   String?  @map("soil_type")
+  notes      String?
+  /// Altitude (m) — obrigatória para o MSA (entra em P e γ da ET₀); sem default
+  altitudeM  Float?   @map("altitude_m")
+  /// Umidade volumétrica na capacidade de campo e no ponto de murcha (m³/m³);
+  /// sem valores, o MSA usa 0,28/0,12 (Latossolo Vermelho) e registra no snapshot
+  thetaFC    Float?   @map("theta_fc")
+  thetaWP    Float?   @map("theta_wp")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  era5Cell Era5Cell?
+  harvests Harvest[]
+
+  @@index([propertyId])
+  @@index([geometry], type: Gist)
+  @@map("fields")
+}
+
+/// Nó da grade ERA5-Land (0,1°) mais próximo do centróide do talhão.
+model Era5Cell {
+  fieldId   String   @id @map("field_id") @db.Uuid
+  cellLat   Decimal  @map("cell_lat") @db.Decimal(4, 1)
+  cellLon   Decimal  @map("cell_lon") @db.Decimal(5, 1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  field Field @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@index([cellLat, cellLon])
+  @@map("era5_cells")
+}
+
+enum Crop {
+  SOJA
+  MILHO
+
+  @@map("crop")
+}
+
+enum HarvestStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+
+  @@map("harvest_status")
+}
+
+/// Parâmetros agronômicos de uma cultivar (FAO-56 / FAO-33). As cultivares
+/// de referência (isDefault) vêm do seed e são imutáveis pela API.
+model Cultivar {
+  id                String   @id @default(uuid()) @db.Uuid
+  name              String
+  crop              Crop
+  cycleDescription  String?  @map("cycle_description")
+  /// Temperatura-base (°C)
+  tBase             Float    @map("t_base")
+  /// GDA total do ciclo (°C·dia)
+  gdaTotal          Float    @map("gda_total")
+  /// Limiares de GDA acumulado que encerram F1, F2 e F3 (F4 vai até gdaTotal)
+  gdaF1End          Float    @map("gda_f1_end")
+  gdaF2End          Float    @map("gda_f2_end")
+  gdaF3End          Float    @map("gda_f3_end")
+  /// Coeficientes de cultura por fase
+  kcIni             Float    @map("kc_ini")
+  kcMid             Float    @map("kc_mid")
+  kcEnd             Float    @map("kc_end")
+  /// Fração de depleção permitida sem estresse (p)
+  depletionFraction Float    @map("depletion_fraction")
+  /// Profundidade radicular inicial e máxima (m)
+  zrIni             Float    @map("zr_ini")
+  zrMax             Float    @map("zr_max")
+  /// Coeficientes de sensibilidade ao estresse hídrico por janela
+  kyF1              Float    @map("ky_f1")
+  kyF2              Float    @map("ky_f2")
+  kyF3              Float    @map("ky_f3")
+  kyF4              Float    @map("ky_f4")
+  isDefault         Boolean  @default(false) @map("is_default")
+  createdById       String?  @map("created_by_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  harvests  Harvest[]
+
+  @@unique([name, crop, createdById])
+  @@index([createdById])
+  @@map("cultivars")
+}
+
+/// Safra: vínculo talhão + cultivar + data de emergência. No máximo uma
+/// ACTIVE por talhão (garantido no service, sob lock da linha do talhão).
+model Harvest {
+  id            String        @id @default(uuid()) @db.Uuid
+  fieldId       String        @map("field_id") @db.Uuid
+  cultivarId    String        @map("cultivar_id") @db.Uuid
+  emergenceDate DateTime      @map("emergence_date") @db.Date
+  /// Safra agrícola, ex.: "2025/26"
+  season        String
+  status        HarvestStatus @default(ACTIVE)
+  notes         String?
+  /// Última run SUCCEEDED do MSA (leitura rápida); NEEDS_DATA/FAILED só no histórico
+  latestRunId   String?       @unique @map("latest_run_id") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // RESTRICT: safras são histórico; talhão/cultivar em uso não podem ser removidos
+  field        Field         @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+  cultivar     Cultivar      @relation(fields: [cultivarId], references: [id], onDelete: Restrict)
+  latestRun    MsaRun?       @relation("HarvestLatestRun", fields: [latestRunId], references: [id], onDelete: SetNull)
+  msaRuns      MsaRun[]      @relation("HarvestRuns")
+  msaDecisions MsaDecision[]
+
+  @@index([fieldId])
+  @@index([cultivarId])
+  @@index([status])
+  @@map("harvests")
+}
+
+enum IngestionStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+
+  @@map("ingestion_status")
+}
+
+/// Série diária ERA5-Land por célula da grade de 0,1° (hipertabela TimescaleDB,
+/// chunk mensal; o create_hypertable está na migration). Dia em UTC. Chaveada
+/// por célula: os talhões chegam à série via era5_cells. Escrita pelo ETL
+/// Python; o Node só lê.
+model Era5DailyData {
+  time        DateTime @db.Date
+  cellLat     Decimal  @map("cell_lat") @db.Decimal(4, 1)
+  cellLon     Decimal  @map("cell_lon") @db.Decimal(5, 1)
+  /// Temperaturas em °C
+  t2mMax      Float    @map("t2m_max") @db.Real
+  t2mMin      Float    @map("t2m_min") @db.Real
+  t2mMean     Float    @map("t2m_mean") @db.Real
+  /// Ponto de orvalho médio (°C)
+  d2mMean     Float    @map("d2m_mean") @db.Real
+  /// Vento a 2 m (m/s), já convertido de 10 m
+  u2          Float    @db.Real
+  /// Saldo de radiação (MJ/m²/dia) = (ssr + str) / 1e6
+  rn          Float    @db.Real
+  /// Precipitação bruta e corrigida (mm); iguais até a change de Quantile Mapping
+  tpRaw       Float    @map("tp_raw") @db.Real
+  tpCorrected Float    @map("tp_corrected") @db.Real
+  qmApplied   Boolean  @default(false) @map("qm_applied")
+  source      String   @default("era5-land")
+  ingestedAt  DateTime @default(now()) @map("ingested_at") @db.Timestamptz(3)
+
+  @@id([time, cellLat, cellLon])
+  @@index([cellLat, cellLon, time])
+  // Índice que o create_hypertable cria automaticamente; declarado aqui para o
+  // Prisma não o tratar como drift (e tentar removê-lo) nas próximas migrations.
+  @@index([time(sort: Desc)], map: "era5_daily_data_time_idx")
+  @@map("era5_daily_data")
+}
+
+/// Uma linha por execução de ingest/backfill do ETL.
+model Era5IngestionRun {
+  id             String          @id @default(uuid()) @db.Uuid
+  /// Linha de comando, para reproduzir a execução
+  command        String
+  startedAt      DateTime        @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt     DateTime?       @map("finished_at") @db.Timestamptz(3)
+  status         IngestionStatus @default(RUNNING)
+  dateFrom       DateTime?       @map("date_from") @db.Date
+  dateTo         DateTime?       @map("date_to") @db.Date
+  cellsRequested Int?            @map("cells_requested")
+  rowsUpserted   Int?            @map("rows_upserted")
+  cdsRequestId   String?         @map("cds_request_id")
+  error          String?
+
+  @@index([startedAt])
+  @@map("era5_ingestion_runs")
+}
+
+enum MsaRunStatus {
+  SUCCEEDED
+  FAILED
+  NEEDS_DATA
+
+  @@map("msa_run_status")
+}
+
+enum MsaScenario {
+  A
+  B
+  C
+
+  @@map("msa_scenario")
+}
+
+/// Uma execução do MSA para uma safra. Guarda tudo o que é preciso para
+/// reproduzir o cálculo: intervalo, semente, iterações, sigmas, snapshots da
+/// cultivar e do solo e a versão do motor.
+model MsaRun {
+  id               String       @id @default(uuid()) @db.Uuid
+  harvestId        String       @map("harvest_id") @db.Uuid
+  status           MsaRunStatus
+  startedAt        DateTime     @map("started_at") @db.Timestamptz(3)
+  finishedAt       DateTime     @map("finished_at") @db.Timestamptz(3)
+  dateFrom         DateTime     @map("date_from") @db.Date
+  dateTo           DateTime     @map("date_to") @db.Date
+  seed             Int?
+  iterations       Int?
+  sigmaPrecip      Float?       @map("sigma_precip")
+  sigmaTemp        Float?       @map("sigma_temp")
+  /// Os 15 parâmetros científicos + id, name, crop, como estavam no momento
+  cultivarSnapshot Json         @map("cultivar_snapshot")
+  /// { thetaFC, thetaWP, altitudeM, soilDefaults }
+  soilSnapshot     Json         @map("soil_snapshot")
+  engineVersion    String       @map("engine_version")
+  /// Datas YYYY-MM-DD ausentes (status NEEDS_DATA)
+  missingDates     Json?        @map("missing_dates")
+  error            String?
+  triggeredById    String?      @map("triggered_by_id") @db.Uuid
+
+  harvest        Harvest           @relation("HarvestRuns", fields: [harvestId], references: [id], onDelete: Cascade)
+  latestOf       Harvest?          @relation("HarvestLatestRun")
+  triggeredBy    User?             @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  dailyResults   MsaDailyResult[]
+  phaseSummaries MsaPhaseSummary[]
+  decisions      MsaDecision[]
+
+  @@index([harvestId, startedAt])
+  @@map("msa_runs")
+}
+
+/// Série diária baseline (sem perturbação) de uma run — colunas de DailyBalanceRow.
+model MsaDailyResult {
+  runId         String   @map("run_id") @db.Uuid
+  date          DateTime @db.Date
+  phase         String
+  gda           Float
+  gdaAccum      Float    @map("gda_accum")
+  zr            Float
+  et0           Float
+  kc            Float
+  etc           Float
+  precipitation Float
+  dr            Float
+  ks            Float
+  etcAdj        Float    @map("etc_adj")
+  taw           Float
+  raw           Float
+
+  run MsaRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@id([runId, date])
+  @@map("msa_daily_results")
+}
+
+/// Resumo de uma janela (baseline + percentis do Monte Carlo).
+model MsaPhaseSummary {
+  runId             String  @map("run_id") @db.Uuid
+  phase             String
+  days              Int
+  ksMean            Float?  @map("ks_mean")
+  etcAdjAccum       Float   @map("etc_adj_accum")
+  precipAccum       Float   @map("precip_accum")
+  yieldReductionPct Float?  @map("yield_reduction_pct")
+  validIterations   Int     @map("valid_iterations")
+  ksMeanP10         Float?  @map("ks_mean_p10")
+  ksMeanP50         Float?  @map("ks_mean_p50")
+  ksMeanP90         Float?  @map("ks_mean_p90")
+  yieldReductionP10 Float?  @map("yield_reduction_p10")
+  yieldReductionP50 Float?  @map("yield_reduction_p50")
+  yieldReductionP90 Float?  @map("yield_reduction_p90")
+  etcAdjAccumP10    Float?  @map("etc_adj_accum_p10")
+  etcAdjAccumP50    Float?  @map("etc_adj_accum_p50")
+  etcAdjAccumP90    Float?  @map("etc_adj_accum_p90")
+
+  run MsaRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@id([runId, phase])
+  @@map("msa_phase_summaries")
+}
+
+/// Escolha do técnico entre os cenários (a)/(b)/(c) — o sistema registra, não recomenda.
+model MsaDecision {
+  id              String      @id @default(uuid()) @db.Uuid
+  harvestId       String      @map("harvest_id") @db.Uuid
+  runId           String      @map("run_id") @db.Uuid
+  phase           String
+  scenario        MsaScenario
+  doseBase        Float       @map("dose_base")
+  efficiencyBase  Float       @map("efficiency_base")
+  /// O cenário escolhido exatamente como foi calculado
+  scenarioPayload Json        @map("scenario_payload")
+  justification   String
+  decidedById     String?     @map("decided_by_id") @db.Uuid
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  harvest   Harvest @relation(fields: [harvestId], references: [id], onDelete: Cascade)
+  run       MsaRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  decidedBy User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([harvestId, createdAt])
+  @@map("msa_decisions")
+}
