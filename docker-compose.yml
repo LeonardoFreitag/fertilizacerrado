@@ -88,6 +88,7 @@ services:
       VITE_DEV_API_PROXY: http://api:3000
       # store do pnpm fora do diretório montado (senão viraria frontend/.pnpm-store no host)
       npm_config_store_dir: /pnpm-store
+      CI: "true" # pnpm não interativo (aceita reinstalar node_modules quando o layout muda)
     ports:
       - "5173:5173"
     volumes:

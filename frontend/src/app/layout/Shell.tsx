@@ -15,7 +15,8 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/propriedades', label: 'Propriedades' },
   { to: '/talhoes', label: 'Talhões' },
-  { to: '/safras', label: 'Safras', disabled: true },
+  { to: '/safras', label: 'Safras' },
+  { to: '/cultivares', label: 'Cultivares' },
   { to: '/admin', label: 'Admin', adminOnly: true },
 ];
 

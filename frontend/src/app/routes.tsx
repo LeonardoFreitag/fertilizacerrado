@@ -1,6 +1,11 @@
-import { Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes, useParams } from 'react-router';
 import { PublicOnly, RequireAuth, RequireRole } from '@/lib/auth/guards';
 import { AdminPage } from '@/features/admin/AdminPage';
+import { CultivarFormPage } from '@/features/cultivars/CultivarFormPage';
+import { CultivarsPage } from '@/features/cultivars/CultivarsPage';
+import { HarvestFormPage } from '@/features/harvests/HarvestFormPage';
+import { HarvestPage } from '@/features/harvests/HarvestPage';
+import { HarvestsPage } from '@/features/harvests/HarvestsPage';
 import { ForgotPasswordPage } from '@/features/auth/ForgotPasswordPage';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { RegisterPage } from '@/features/auth/RegisterPage';
@@ -22,13 +27,9 @@ function NotFound() {
   );
 }
 
-function ComingSoon({ title }: { title: string }) {
-  return (
-    <div className="py-16 text-center">
-      <h1 className="text-2xl font-semibold text-slate-800">{title}</h1>
-      <p className="mt-2 text-slate-600">Em breve.</p>
-    </div>
-  );
+function RedirectToHarvest() {
+  const { id } = useParams();
+  return <Navigate to={`/safras/${id}`} replace />;
 }
 
 export function AppRoutes() {
@@ -55,7 +56,14 @@ export function AppRoutes() {
           <Route path="/propriedades/:id/talhoes/:fieldId" element={<FieldDetailPage />} />
           <Route path="/propriedades/:id/talhoes/:fieldId/editar" element={<FieldFormPage />} />
           <Route path="/talhoes" element={<FieldsPage />} />
-          <Route path="/safras" element={<ComingSoon title="Safras" />} />
+          <Route path="/safras" element={<HarvestsPage />} />
+          <Route path="/safras/nova" element={<HarvestFormPage />} />
+          <Route path="/safras/:id" element={<HarvestPage />} />
+          <Route path="/safras/:id/msa" element={<RedirectToHarvest />} />
+          <Route path="/cultivares" element={<CultivarsPage />} />
+          <Route path="/cultivares/nova" element={<CultivarFormPage />} />
+          <Route path="/cultivares/:id" element={<CultivarFormPage readOnly />} />
+          <Route path="/cultivares/:id/editar" element={<CultivarFormPage />} />
           <Route element={<RequireRole roles={['ADMIN']} />}>
             <Route path="/admin" element={<AdminPage />} />
           </Route>

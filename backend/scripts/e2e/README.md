@@ -32,7 +32,7 @@ bash backend/scripts/e2e/e2e-era5.sh          # opcional, exige CDS_API_KEY
 
 Rode-os em sequência, não em paralelo: compartilham o banco.
 
-O smoke do frontend (Playwright) fica em `frontend/e2e/` e roda com `cd frontend && pnpm e2e`, também contra a stack de dev (ver `docs/modulos/frontend.md`).
+Os testes do frontend (Playwright) ficam em `frontend/e2e/` e rodam com `cd frontend && pnpm e2e`, também contra a stack de dev (ver `docs/modulos/frontend.md`). O `msa.spec.ts` depende, como o `e2e-orchestration.sh`, do cache do ETL para a célula (−16,7; −49,3) e dos serviços `worker` e `etl` no ar; cria um agrônomo, uma propriedade e uma safra que ficam no banco (os roteiros bash os removem).
 
 Cada linha sai como `PASS` ou `FAIL` com o esperado e o obtido; o final mostra `FALHAS: N`. Para ver só o que falhou:
 

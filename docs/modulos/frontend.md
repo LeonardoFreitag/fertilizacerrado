@@ -1,6 +1,6 @@
 # Frontend — aplicação web do técnico
 
-Aplicação SPA em `frontend/` que consome a API (`/api/v1`). Idioma pt-BR em toda a interface; desktop como alvo, utilizável no celular. Esta change entrega a fundação (sessão, layout, infra), **autenticação** e **propriedades/talhões**; safras e o painel do MSA vêm nas próximas.
+Aplicação SPA em `frontend/` que consome a API (`/api/v1`). Idioma pt-BR em toda a interface; desktop como alvo, utilizável no celular. Cobre a Fase 1 inteira: fundação (sessão, layout, infra), **autenticação**, **propriedades/talhões**, **cultivares**, **safras** e o **painel MSA** (janelas, gráficos, cenários e decisões), além da administração das filas.
 
 ## Stack
 
@@ -12,6 +12,7 @@ Aplicação SPA em `frontend/` que consome a API (`/api/v1`). Idioma pt-BR em to
 | Dados | TanStack Query 5 | chaves por recurso; mutações invalidam |
 | Formulários | react-hook-form + zod (`@hookform/resolvers`) | schemas espelham os DTOs do backend |
 | Mapa | react-leaflet 4 + leaflet 1.9 + leaflet-geoman (free) + `@turf/area` | OSM e Esri World Imagery |
+| Gráficos | Recharts 2 | série diária do MSA (`ReferenceArea` por janela, `ReferenceLine` nos limiares de Ks) |
 | Testes | Vitest 3 + Testing Library (jsdom); Playwright (Chromium) | smoke contra a stack de dev |
 
 Scripts: `pnpm dev` · `pnpm build` · `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm e2e`.
@@ -25,17 +26,21 @@ frontend/
 │   ├── lib/
 │   │   ├── api/          client.ts (fetch + refresh), errors.ts (códigos → pt-BR), types.ts (espelho das respostas)
 │   │   ├── auth/         session.ts (store em memória), bootstrap.ts, actions.ts, guards.tsx
-│   │   ├── validation/   documents.ts (CPF/CNPJ/máscaras), schemas.ts (zod)
-│   │   └── geo/          geo.ts (área, limites, SVG, célula ERA5)
+│   │   ├── validation/   documents.ts (CPF/CNPJ/máscaras), schemas.ts, cultivar.ts, harvest.ts (zod)
+│   │   ├── geo/          geo.ts (área, limites, SVG, célula ERA5)
+│   │   └── msa/          msa.ts (severidade, faixas fenológicas, formatação, safra sugerida), csv.ts
 │   ├── components/       ui.tsx (Button, Input, Select, FormField…), states.tsx, toast.tsx, dialog.tsx
 │   ├── features/
 │   │   ├── auth/         Login, Cadastro, Verifique/Verificar e-mail, Esqueci/Redefinir senha
 │   │   ├── properties/   api.ts (hooks), lista, formulário (+ UserPicker), detalhe
 │   │   ├── fields/       api.ts, MapView, PolygonEditor, FieldForm/Detail/List/Thumbnail, /talhoes
-│   │   └── admin/        contagens das filas
+│   │   ├── cultivars/    api.ts, lista (referência × próprias), formulário por grupos
+│   │   ├── harvests/     api.ts, lista com filtros, formulário, HarvestPage (cabeçalho + MsaPanel)
+│   │   ├── msa/          api.ts, useMsaPolling, MsaPanel, MsaHeader (+ CSV), PhaseTimeline, PhaseCards, MsaCharts, DecisionPanel, RunsTable
+│   │   └── admin/        contagens das filas + ações (ingest-latest, backfill-region, process-all) + jobs da sessão
 │   ├── test/setup.ts
 │   ├── index.css · main.tsx
-├── e2e/smoke.spec.ts     Playwright
+├── e2e/                  Playwright: smoke.spec.ts (auth/propriedades/talhões), msa.spec.ts (safra → painel → decisão → CSV; admin)
 ├── Dockerfile            build → nginx:1.25-alpine com os estáticos
 └── vite.config.ts · tailwind.config.ts · playwright.config.ts · eslint.config.js
 ```
@@ -49,8 +54,9 @@ frontend/
 | `/propriedades`, `/propriedades/nova`, `/propriedades/:id`, `/propriedades/:id/editar` | propriedades | autenticado (escrita: AGRONOMO/ADMIN) |
 | `/propriedades/:id/talhoes/novo`, `/:fieldId`, `/:fieldId/editar` | talhões | idem |
 | `/talhoes` | talhões agrupados por propriedade | autenticado |
-| `/safras` | "em breve" | — |
-| `/admin` | contagens das filas BullMQ | ADMIN (outros veem "Sem permissão") |
+| `/cultivares`, `/cultivares/nova`, `/cultivares/:id` (leitura), `/cultivares/:id/editar` | cultivares | autenticado (escrita: AGRONOMO/ADMIN; referência só leitura) |
+| `/safras`, `/safras/nova`, `/safras/:id` (`/safras/:id/msa` redireciona) | safras e painel MSA | autenticado (escrita e reprocessar: AGRONOMO/ADMIN) |
+| `/admin` | filas BullMQ: contagens e ações | ADMIN (outros veem "Sem permissão") |
 
 ## Fluxo de autenticação
 
@@ -96,6 +102,22 @@ Login responde `{ accessToken, user }` → `session.setSession`; logout chama `P
 - Detalhe: polígono, centróide (`CircleMarker`, evita os ícones do Leaflet) e retângulo tracejado da célula ERA5-Land (0,1°).
 - Miniaturas: `FieldThumbnail` desenha o contorno em SVG estático (`polygonToSvgPath`), sem instância de mapa.
 
+## Cultivares e safras
+
+- **Cultivares**: `GET /cultivars` separa **Referência** (`isDefault`; leitura, nota FAO-56/FAO-33) de **Minhas cultivares**. O formulário agrupa os 15 parâmetros (Térmicos, Kc, Hídricos, Ky; `lib/validation/cultivar.ts` replica faixas e relações `gdaF1End < gdaF2End < gdaF3End < gdaTotal`, `zrIni ≤ zrMax`, apontando o campo à direita). A API não expõe "em uso": um 409 `CULTIVAR_IN_USE` no PATCH congela os grupos de parâmetros e oferece reenviar só nome/descrição.
+- **Safras**: lista com filtros status / propriedade → talhão (`?fieldId=` pré-seleciona); criação com talhão agrupado por propriedade, cultivar (referência primeiro), emergência (máx. hoje), safra sugerida por `suggestSeason` (jul–dez ⇒ ano/ano+1; jan–jun ⇒ ano−1/ano) e notas; aviso quando o talhão não tem altitude. Status via PATCH (Concluir/Cancelar/Reativar) com confirmação; sem exclusão.
+- **Acompanhamento**: após criar (ou ao clicar em Reprocessar), `useMsaPolling(harvestId, since)` consulta `GET /msa/runs` a cada 3 s até aparecer uma run iniciada após `since` (qualquer status) ou 10 min; ADMIN vê também o estado do job (`GET /admin/jobs/msa-process/:id`). Ao concluir, invalida as consultas do MSA.
+
+## Painel MSA (`/safras/:id`)
+
+- **Cabeçalho**: intervalo, janela atual, status, run (id, data, origem, semente, iterações/σ, `engineVersion`), Reprocessar (202 + polling), exportação CSV; aviso quando a tentativa mais recente é `NEEDS_DATA`/`FAILED` (o painel mostra a última `SUCCEEDED`).
+- **Linha do tempo** (`phaseRanges`): barras proporcionais aos dias de cada janela presentes na série, datas, marcador "hoje", janelas não alcançadas tracejadas.
+- **Cartões** (`severity`): Ks médio, percentis P10/P50/P90, redução de produtividade, ETc_adj e chuva acumuladas, dias/iterações; cor + rótulo: ok ≥ 0,85, atenção 0,70–0,85, crítico < 0,70, cinza quando não alcançada.
+- **Gráficos** (Recharts): chuva (barras) + ETc/ETc_adj (linhas) com fundo por janela; Dr × RAW × TAW; Ks com referências 0,85/0,70. Tooltip com todos os campos do dia.
+- **Cenários**: janela, dose base e eficiência base (debounce 400 ms) → `GET /msa/decision` → A/B/C com racional; B indisponível mostra `bUnavailableReason`; "Registrar decisão X" abre justificativa obrigatória → `POST /msa/decisions` com `runId`. Lista de decisões abaixo. PRODUTOR vê sem botões.
+- **Histórico de runs**: tabela; "Ver série" troca a série dos gráficos/linha do tempo para uma run antiga (`?runId=`) com aviso e retorno.
+- **CSV** (`lib/msa/csv.ts`): `;`, vírgula decimal, BOM UTF-8; `serie-diaria-<talhao-safra>-<run>.csv` e `resumos-…csv`.
+
 ## Infra
 
 - **Dev**: serviço `frontend` (node:20-alpine, Vite com `--host`, `node_modules` em volume anônimo). `nginx.dev.conf`: `/api/` → API; `/` → `frontend:5173` com upgrade de WebSocket (HMR). Acesse `http://localhost`. O Vite também faz proxy de `/api` (`VITE_DEV_API_PROXY`), então `http://localhost:5173` funciona sozinho.
@@ -108,5 +130,7 @@ Login responde `{ accessToken, user }` → `session.setSession`; logout chama `P
 cd frontend
 pnpm test                         # unitários: validadores/máscaras, cliente HTTP, guards, geo
 pnpm e2e                          # Playwright contra http://localhost (stack no ar; lê o link do e-mail em `docker compose logs api`)
+                                  # msa.spec.ts exige worker + etl e o cache do ETL da célula de Goiânia (como o e2e-orchestration.sh);
+                                  # sem ERA5_E2E_CDS=1 faz `touch` no cache para não ir ao CDS
 pnpm exec playwright install chromium   # primeira vez
 ```

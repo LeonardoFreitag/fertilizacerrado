@@ -74,7 +74,7 @@ O cálculo em si é a biblioteca pura `src/modules/msa/engine/` (`docs/msa/algor
 - **Manual** — `POST /api/v1/harvests/:id/msa/process` (AGRONOMO/ADMIN) responde **202** `{ jobId, queue: "msa-process", status: "queued" }` e a run sai com `reason: MANUAL`. Com `?sync=true` (**só ADMIN**; 403 `SYNC_ADMIN_ONLY` para os demais) processa inline e responde 201/200/422/500 como antes — válvula para operação e roteiros.
 - **Operação** — `POST /api/v1/admin/jobs/process-all` (ADMIN) enfileira todas as safras ativas.
 
-Cada run registra `reason` e `jobId` (nulo no inline); runs do worker têm `triggeredById` nulo. Detalhes das filas: `docs/msa/era5-etl.md` § Orquestração.
+Cada run registra `reason` e `jobId` (nulo no inline); runs do worker têm `triggeredById` nulo. Detalhes das filas: `docs/msa/era5-etl.md` § Orquestração. A interface do técnico (`/safras/:id`, `docs/modulos/frontend.md` § Painel MSA) consome estes endpoints: cartões por janela com severidade do Ks, gráficos da série diária, cenários A/B/C e registro de decisões, histórico de runs e exportação CSV.
 
 **Pré-requisitos no talhão:** `altitudeM` obrigatório (422 `MISSING_FIELD_ALTITUDE`, sem run); `thetaFC`/`thetaWP` opcionais (default 0,28/0,12, registrado no snapshot com `soilDefaults: true`).
 

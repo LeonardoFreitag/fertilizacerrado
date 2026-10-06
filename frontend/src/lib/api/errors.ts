@@ -23,9 +23,18 @@ const MESSAGES: Record<string, string> = {
   AGRONOMIST_WITHOUT_ACCESS: 'O agrônomo informado não tem acesso a esta propriedade.',
   FORBIDDEN_FIELDS: 'Você não pode alterar estes campos.',
   INVALID_GEOMETRY: 'Polígono inválido.',
-  FIELD_HAS_ACTIVE_HARVEST: 'Este talhão tem safras; encerre-as ou remova-as antes.',
   FIELD_HAS_HARVESTS: 'Este talhão tem safras; encerre-as ou remova-as antes.',
   CONFLICT: 'Já existe um registro com estes dados.',
+  CULTIVAR_IN_USE: 'Esta cultivar tem safras vinculadas: os parâmetros científicos estão congelados.',
+  INVALID_CULTIVAR: 'Cultivar inexistente ou não disponível para você.',
+  EMERGENCE_DATE_IN_FUTURE: 'A data de emergência não pode ser futura.',
+  FIELD_HAS_ACTIVE_HARVEST: 'Este talhão tem uma safra ativa; conclua-a ou cancele-a antes.',
+  NO_MSA_RESULT: 'A safra ainda não tem processamento do MSA concluído.',
+  MISSING_FIELD_ALTITUDE: 'O talhão não tem altitude cadastrada; informe-a antes de processar.',
+  PHASE_NOT_REACHED: 'Janela ainda não alcançada nesta run.',
+  SCENARIO_UNAVAILABLE: 'Cenário indisponível para esta janela.',
+  MSA_PROCESSING_FAILED: 'O processamento do MSA falhou; a run foi gravada como FAILED.',
+  SYNC_ADMIN_ONLY: 'Processamento síncrono é restrito a administradores.',
 };
 
 /** Campo do formulário associado a um código de conflito. */
@@ -35,6 +44,9 @@ const FIELD_BY_CODE: Record<string, string> = {
   CNPJ_ALREADY_REGISTERED: 'cnpj',
   INVALID_OWNER: 'ownerId',
   INVALID_AGRONOMIST: 'agronomistId',
+  INVALID_CULTIVAR: 'cultivarId',
+  EMERGENCE_DATE_IN_FUTURE: 'emergenceDate',
+  FIELD_HAS_ACTIVE_HARVEST: 'fieldId',
 };
 
 export function formatRetryAfter(seconds: number): string {

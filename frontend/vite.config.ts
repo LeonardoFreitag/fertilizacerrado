@@ -22,6 +22,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           leaflet: ['leaflet', 'react-leaflet', '@geoman-io/leaflet-geoman-free'],
+          charts: ['recharts'],
         },
       },
     },

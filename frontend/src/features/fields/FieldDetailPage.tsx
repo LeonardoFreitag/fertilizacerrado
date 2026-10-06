@@ -67,7 +67,11 @@ export function FieldDetailPage() {
         }
         backTo={{ to: `/propriedades/${propertyId}`, label: property.data?.name ?? 'Propriedade' }}
         actions={
-          canManage && (
+          <>
+            <LinkButton to={`/safras?fieldId=${f.id}`} variant="secondary">
+              Safras deste talhão
+            </LinkButton>
+            {canManage && (
             <>
               <LinkButton to={`/propriedades/${propertyId}/talhoes/${f.id}/editar`} variant="secondary">
                 Editar
@@ -76,7 +80,8 @@ export function FieldDetailPage() {
                 Excluir
               </Button>
             </>
-          )
+            )}
+          </>
         }
       />
 
