@@ -26,6 +26,23 @@ export interface UserDirectoryEntry extends UserSummary {
   role: Role;
 }
 
+/** Visão administrativa (ADMIN e o próprio usuário) */
+export interface UserAdminView extends UserDirectoryEntry {
+  active: boolean;
+  emailVerified: boolean;
+  phone: string | null;
+  crea: string | null;
+  document: string | null;
+  createdAt: string;
+}
+
+export interface UsersPage<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export interface LoginResponse {
   accessToken: string;
   user: PublicUser;

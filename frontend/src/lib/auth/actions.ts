@@ -26,6 +26,10 @@ export function verifyEmail(token: string): Promise<{ message: string }> {
   return api(`/auth/verify-email/${encodeURIComponent(token)}`);
 }
 
+export function resendVerification(email: string): Promise<{ message: string }> {
+  return api('/auth/resend-verification', { method: 'POST', body: { email } });
+}
+
 export function forgotPassword(email: string): Promise<{ message: string }> {
   return api('/auth/forgot-password', { method: 'POST', body: { email } });
 }

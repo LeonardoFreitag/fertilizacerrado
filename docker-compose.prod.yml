@@ -179,6 +179,34 @@ services:
       - backend_net
       - frontend_net
 
+  # Backup diário (03:30 America/Sao_Paulo) com pg_dump -Fc no volume db_backups.
+  # Cliente postgres 15 = major do timescaledb-ha:pg15. Envio para S3: Fase 2 de infra.
+  backup:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      TZ: America/Sao_Paulo
+      PGHOST: db
+      PGUSER: ${DB_USER}
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: ${DB_NAME}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    command: sh -c "crontab /scripts/crontab && crond -f -l 8"
+    volumes:
+      - ./backend/scripts/db/backup-cron.sh:/scripts/backup-cron.sh:ro
+      - ./backend/scripts/db/crontab:/scripts/crontab:ro
+      - db_backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend_net
+
   # Nginx + estáticos da SPA (frontend/Dockerfile). A configuração continua montada do repositório.
   nginx:
     image: ${ECR_REGISTRY}/${ECR_REPOSITORY_WEB:-fertiliza-web}:${IMAGE_TAG:-latest}
@@ -209,6 +237,7 @@ networks:
 
 volumes:
   postgres_data:
+  db_backups:
   station_imports:
   redis_data:
   nginx_logs:

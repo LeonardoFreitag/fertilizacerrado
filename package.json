@@ -3,7 +3,10 @@
   "private": true,
   "description": "Atalhos para operar a stack Docker do FertilizaCerrado",
   "packageManager": "pnpm@9.15.4",
-  "engines": { "node": ">=20.0.0", "pnpm": ">=9.0.0" },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
   "scripts": {
     "start": "docker compose up -d",
     "stop": "docker compose down",
@@ -26,6 +29,8 @@
     "test:frontend": "docker compose exec frontend pnpm test",
     "test:e2e": "docker compose exec frontend pnpm exec playwright test",
     "verify-link": "docker compose logs api | grep -oE 'http://[^ ]*(verificar-email|redefinir-senha)[^ ]*' | tail -1",
-    "clean": "docker compose down -v"
+    "clean": "docker compose down -v",
+    "db:backup": "bash backend/scripts/db/backup.sh",
+    "db:restore": "bash backend/scripts/db/restore.sh"
   }
 }

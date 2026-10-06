@@ -9,6 +9,7 @@ authRoutes.post('/login', authController.login);
 authRoutes.post('/refresh', authController.refresh);
 authRoutes.post('/logout', authController.logout);
 authRoutes.post('/forgot-password', authController.forgotPassword);
+authRoutes.post('/resend-verification', authController.resendVerification);
 authRoutes.post('/reset-password', authController.resetPassword);
 authRoutes.get('/verify-email/:token', authController.verifyEmail);
 authRoutes.get('/me', authenticate, authController.me);

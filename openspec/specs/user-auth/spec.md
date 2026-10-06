@@ -80,7 +80,7 @@ O sistema SHALL confirmar o e-mail em `GET /api/v1/auth/verify-email/:token`. O 
 - **THEN** o link é `http://localhost/verificar-email/<token>`
 
 ### Requirement: Login
-O sistema SHALL autenticar em `POST /api/v1/auth/login` com `email` e `password`. Em sucesso SHALL responder 200 com `accessToken` e os dados `id`, `name`, `email` e `role` do usuário, e SHALL gravar o refresh token em um cookie `HttpOnly`. O access token MUST ser um JWT HS256 com validade de 15 minutos. O refresh token MUST ter validade de 7 dias e MUST NOT aparecer no corpo da resposta. Contas com e-mail não verificado MUST NOT receber tokens.
+O sistema SHALL autenticar em `POST /api/v1/auth/login` com `email` e `password`. Em sucesso SHALL responder 200 com `accessToken` e os dados `id`, `name`, `email` e `role` do usuário, e SHALL gravar o refresh token em um cookie `HttpOnly`. O access token MUST ser um JWT HS256 com validade de 15 minutos. O refresh token MUST ter validade de 7 dias e MUST NOT aparecer no corpo da resposta. Contas com e-mail não verificado MUST NOT receber tokens. Contas inativas (`active = false`) MUST receber 403 `USER_INACTIVE`, verificado antes da checagem de e-mail.
 
 #### Scenario: Credenciais corretas
 - **WHEN** um usuário verificado envia e-mail e senha corretos
@@ -101,6 +101,10 @@ O sistema SHALL autenticar em `POST /api/v1/auth/login` com `email` e `password`
 #### Scenario: E-mail não verificado
 - **WHEN** as credenciais estão corretas mas `emailVerified` é falso
 - **THEN** a resposta é 403 com o código `EMAIL_NOT_VERIFIED` e nenhum token é emitido
+
+#### Scenario: Conta inativa
+- **WHEN** as credenciais estão corretas mas `active` é falso
+- **THEN** a resposta é 403 com o código `USER_INACTIVE` e nenhum token é emitido
 
 #### Scenario: Cookie seguro em produção
 - **WHEN** o login ocorre com `NODE_ENV` igual a `production`

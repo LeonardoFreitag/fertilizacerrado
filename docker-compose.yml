@@ -38,7 +38,8 @@ services:
     build:
       context: ./backend
       target: builder
-    command: sh -c "pnpm prisma migrate deploy && pnpm exec ts-node-dev --respawn --transpile-only src/server.ts"
+    # `prisma generate` a cada subida: o schema montado do host pode ser mais novo que o client da imagem
+    command: sh -c "pnpm prisma generate && pnpm prisma migrate deploy && pnpm exec ts-node-dev --respawn --transpile-only src/server.ts"
     env_file:
       - .env
     environment:
@@ -63,7 +64,7 @@ services:
     build:
       context: ./backend
       target: builder
-    command: pnpm exec ts-node-dev --respawn --transpile-only src/worker.ts
+    command: sh -c "pnpm prisma generate && pnpm exec ts-node-dev --respawn --transpile-only src/worker.ts"
     env_file:
       - .env
     environment:

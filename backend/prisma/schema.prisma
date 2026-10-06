@@ -25,6 +25,8 @@ model User {
   cnpj                String?   @unique
   crea                String?
   phone               String?
+  /// Conta desativada não faz login nem renova sessão; nada é apagado
+  active              Boolean   @default(true)
   emailVerified       Boolean   @default(false) @map("email_verified")
   emailVerifiedAt     DateTime? @map("email_verified_at") @db.Timestamptz(3)
   /// Hash SHA-256 do token de recuperação de senha

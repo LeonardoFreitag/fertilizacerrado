@@ -6,7 +6,7 @@ import { FormError } from '@/components/states';
 import { Button, FormField, Input } from '@/components/ui';
 import { ApiError } from '@/lib/api/client';
 import { formatRetryAfter, messageFor } from '@/lib/api/errors';
-import { login } from '@/lib/auth/actions';
+import { login, resendVerification } from '@/lib/auth/actions';
 import { loginSchema, type LoginForm } from '@/lib/validation/schemas';
 import { AuthLayout } from './AuthLayout';
 
@@ -20,6 +20,8 @@ export function LoginPage() {
   const [params] = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [blockedUntil, setBlockedUntil] = useState<number | null>(null);
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  const [resendState, setResendState] = useState<{ status: 'idle' | 'sending' | 'sent' | 'error'; message?: string }>({ status: 'idle' });
   const [now, setNow] = useState(Date.now());
   const { register, handleSubmit, formState } = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
 
@@ -36,8 +38,21 @@ export function LoginPage() {
     }
   }, [blockedUntil, remaining]);
 
+  async function handleResend() {
+    if (!unverifiedEmail) return;
+    setResendState({ status: 'sending' });
+    try {
+      await resendVerification(unverifiedEmail);
+      setResendState({ status: 'sent', message: 'E-mail reenviado. Verifique sua caixa de entrada (e o spam).' });
+    } catch (e) {
+      setResendState({ status: 'error', message: messageFor(e) });
+    }
+  }
+
   const onSubmit = handleSubmit(async (data) => {
     setError(null);
+    setUnverifiedEmail(null);
+    setResendState({ status: 'idle' });
     try {
       await login(data.email, data.password);
       navigate(safeNext(params.get('next')), { replace: true });
@@ -45,6 +60,7 @@ export function LoginPage() {
       if (e instanceof ApiError && e.status === 429 && e.retryAfter) {
         setBlockedUntil(Date.now() + e.retryAfter * 1000);
       }
+      if (e instanceof ApiError && e.code === 'EMAIL_NOT_VERIFIED') setUnverifiedEmail(data.email);
       setError(messageFor(e));
     }
   });
@@ -70,6 +86,20 @@ export function LoginPage() {
           <Input id="password" type="password" autoComplete="current-password" invalid={!!formState.errors.password} {...register('password')} />
         </FormField>
         <FormError message={remaining > 0 && error ? `${error.split(' Tente')[0]} Tente novamente em ${formatRetryAfter(remaining)}.` : error} />
+        {unverifiedEmail && (
+          <div className="text-sm">
+            {resendState.status === 'sent' ? (
+              <p role="status" className="text-brand-800">{resendState.message}</p>
+            ) : (
+              <>
+                <Button type="button" variant="secondary" size="sm" onClick={handleResend} loading={resendState.status === 'sending'}>
+                  Reenviar e-mail de verificação
+                </Button>
+                {resendState.status === 'error' && <p role="alert" className="mt-1 text-xs text-red-700">{resendState.message}</p>}
+              </>
+            )}
+          </div>
+        )}
         <Button type="submit" className="w-full" loading={formState.isSubmitting} disabled={remaining > 0}>
           Entrar
         </Button>

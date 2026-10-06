@@ -101,6 +101,7 @@ Renova o access token usando o refresh token.
 
 - Rotação: emite novo refresh token e invalida o anterior (one-time-use)
 - Se o token não bater com o hash armazenado → revoga toda a sessão (indício de replay attack)
+- Usuário desativado (`active = false`) não renova: 401
 
 ---
 
@@ -128,6 +129,11 @@ Redefine a senha usando o token de recuperação.
 
 ### GET /api/v1/auth/verify-email/:token
 Confirma o e-mail do usuário. O link do e-mail aponta para a página do frontend `${FRONTEND_URL}/verificar-email/<token>`, que chama este endpoint e mostra o resultado (o link de recuperação de senha, análogo, vai para `${FRONTEND_URL}/redefinir-senha?token=<token>`).
+
+---
+
+### POST /api/v1/auth/resend-verification
+Reenvia o e-mail de verificação. Resposta 200 com a mesma mensagem exista ou não a conta (envia só se a conta existe, está ativa e não verificada). Limite de 3 pedidos por hora por e-mail no Redis; acima disso 429 com `Retry-After`. Detalhes em [usuarios.md](usuarios.md).
 
 ---
 

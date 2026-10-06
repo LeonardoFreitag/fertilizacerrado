@@ -40,11 +40,11 @@ O roteador SHALL distinguir rotas públicas (`/entrar`, `/cadastro`, `/verifique
 - **THEN** é redirecionado para `/propriedades`
 
 ### Requirement: Shell de navegação
-As rotas protegidas SHALL ser renderizadas dentro de um shell com barra lateral e cabeçalho. A barra lateral MUST listar **Propriedades**, **Talhões**, **Safras**, **Cultivares** e, apenas para `ADMIN`, **Admin**; o item da rota atual MUST estar destacado. O cabeçalho MUST mostrar nome e role do usuário (rótulos "Administrador", "Agrônomo", "Produtor") e a ação **Sair**. Em telas estreitas a barra lateral MUST recolher em um menu.
+As rotas protegidas SHALL ser renderizadas dentro de um shell com barra lateral e cabeçalho. A barra lateral MUST listar **Propriedades**, **Talhões**, **Safras**, **Cultivares** e, apenas para `ADMIN`, **Usuários** e **Admin**; o item da rota atual MUST estar destacado. O cabeçalho MUST mostrar nome e role do usuário (rótulos "Administrador", "Agrônomo", "Produtor"), com o nome ligando para `/perfil`, e a ação **Sair**. Em telas estreitas a barra lateral MUST recolher em um menu.
 
 #### Scenario: Menu por role
 - **WHEN** um `PRODUTOR` está autenticado
-- **THEN** a barra lateral mostra Propriedades, Talhões, Safras e Cultivares e não mostra Admin
+- **THEN** a barra lateral mostra Propriedades, Talhões, Safras e Cultivares e não mostra Usuários nem Admin
 
 #### Scenario: Safras habilitada
 - **WHEN** o usuário clica em Safras
@@ -52,7 +52,11 @@ As rotas protegidas SHALL ser renderizadas dentro de um shell com barra lateral 
 
 #### Scenario: Cabeçalho
 - **WHEN** a agrônoma Ana está autenticada
-- **THEN** o cabeçalho mostra "Ana" e "Agrônomo" e o botão Sair
+- **THEN** o cabeçalho mostra "Ana" (link para `/perfil`) e "Agrônomo" e o botão Sair
+
+#### Scenario: Usuários para admin
+- **WHEN** um `ADMIN` clica em Usuários
+- **THEN** navega para `/admin/usuarios`
 
 ### Requirement: Estados e feedback padronizados
 Toda listagem e todo detalhe SHALL usar os componentes compartilhados de **carregando**, **vazio** (mensagem e ação principal quando aplicável) e **erro** (mensagem amigável e botão "Tentar novamente"). Ações de escrita SHALL confirmar sucesso ou falha com um toast; falhas MUST exibir a mensagem mapeada do código da API, nunca o JSON bruto. Ações destrutivas MUST pedir confirmação em um diálogo.

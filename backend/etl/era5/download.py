@@ -126,10 +126,26 @@ def build_request(bbox: BBox, year: int, months: int | list[int]) -> dict:
     }
 
 
-def make_client(settings: Settings):
-    import cdsapi  # import tardio: só quem baixa precisa do pacote configurado
+class LazyCdsClient:
+    """Cliente do CDS criado só no primeiro ``retrieve``: o ``cdsapi.Client`` consulta
+    o CDS já na construção (mensagens do catálogo) e, com o serviço inacessível,
+    travaria até uma ingestão inteiramente servida pelo cache."""
 
-    return cdsapi.Client(url=settings.cds_api_url, key=settings.require_cds_key(), quiet=True)
+    def __init__(self, settings: Settings):
+        self._url = settings.cds_api_url
+        self._key = settings.require_cds_key()  # a chave continua exigida antes de começar
+        self._client = None
+
+    def retrieve(self, dataset: str, request: dict, target: str):
+        if self._client is None:
+            import cdsapi  # import tardio: só quem baixa precisa do pacote configurado
+
+            self._client = cdsapi.Client(url=self._url, key=self._key, quiet=True)
+        return self._client.retrieve(dataset, request, target)
+
+
+def make_client(settings: Settings) -> LazyCdsClient:
+    return LazyCdsClient(settings)
 
 
 # --- cache ------------------------------------------------------------------

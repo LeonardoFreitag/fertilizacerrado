@@ -4,6 +4,7 @@ import { AppError } from '../../utils/app-error';
 import type { SignedToken } from '../../utils/token.util';
 import { authService } from './auth.service';
 import { forgotPasswordSchema } from './dtos/forgot-password.dto';
+import { resendVerificationSchema } from './dtos/resend-verification.dto';
 import { loginSchema } from './dtos/login.dto';
 import { registerSchema } from './dtos/register.dto';
 import { resetPasswordSchema } from './dtos/reset-password.dto';
@@ -70,6 +71,12 @@ export const authController = {
 
     clearRefreshCookie(res);
     res.status(204).end();
+  },
+
+  async resendVerification(req: Request, res: Response): Promise<void> {
+    const dto = resendVerificationSchema.parse(req.body);
+    await authService.resendVerification(dto.email);
+    res.status(200).json({ message: 'Se o e-mail estiver cadastrado e ainda não verificado, enviaremos um novo link.' });
   },
 
   async forgotPassword(req: Request, res: Response): Promise<void> {

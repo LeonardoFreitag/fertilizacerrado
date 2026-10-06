@@ -35,6 +35,10 @@ const MESSAGES: Record<string, string> = {
   SCENARIO_UNAVAILABLE: 'Cenário indisponível para esta janela.',
   MSA_PROCESSING_FAILED: 'O processamento do MSA falhou; a run foi gravada como FAILED.',
   SYNC_ADMIN_ONLY: 'Processamento síncrono é restrito a administradores.',
+  USER_INACTIVE: 'Sua conta está desativada. Fale com o administrador.',
+  LAST_ADMIN: 'Não é possível desativar ou rebaixar o último administrador ativo.',
+  ALREADY_VERIFIED: 'Este e-mail já está verificado.',
+  INVALID_FILE: 'Arquivo inválido.',
 };
 
 /** Campo do formulário associado a um código de conflito. */

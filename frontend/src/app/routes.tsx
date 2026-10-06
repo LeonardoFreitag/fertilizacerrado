@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes, useParams } from 'react-router';
 import { PublicOnly, RequireAuth, RequireRole } from '@/lib/auth/guards';
 import { AdminPage } from '@/features/admin/AdminPage';
+import { UsersPage } from '@/features/admin/UsersPage';
+import { ProfilePage } from '@/features/profile/ProfilePage';
 import { CultivarFormPage } from '@/features/cultivars/CultivarFormPage';
 import { CultivarsPage } from '@/features/cultivars/CultivarsPage';
 import { HarvestFormPage } from '@/features/harvests/HarvestFormPage';
@@ -64,8 +66,10 @@ export function AppRoutes() {
           <Route path="/cultivares/nova" element={<CultivarFormPage />} />
           <Route path="/cultivares/:id" element={<CultivarFormPage readOnly />} />
           <Route path="/cultivares/:id/editar" element={<CultivarFormPage />} />
+          <Route path="/perfil" element={<ProfilePage />} />
           <Route element={<RequireRole roles={['ADMIN']} />}>
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/admin/usuarios" element={<UsersPage />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Route>

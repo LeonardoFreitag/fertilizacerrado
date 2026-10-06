@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/client';
-import type { PropertyPayload, PropertyResponse, Role, UserDirectoryEntry } from '@/lib/api/types';
+import type { PropertyPayload, PropertyResponse, Role, UserDirectoryEntry, UsersPage } from '@/lib/api/types';
 
 export const propertyKeys = {
   all: ['properties'] as const,
@@ -51,7 +51,8 @@ export function useUserSearch(q: string, role: Role | undefined, enabled: boolea
   const term = q.trim();
   return useQuery({
     queryKey: ['users', role ?? 'any', term],
-    queryFn: () => api<UserDirectoryEntry[]>('/users', { query: { q: term || undefined, role, limit: 20 } }),
+    queryFn: () => api<UsersPage<UserDirectoryEntry>>('/users', { query: { q: term || undefined, role, pageSize: 20 } }),
+    select: (page) => page.items,
     enabled: enabled && (term.length >= 3 || term.length === 0),
     staleTime: 60_000,
   });

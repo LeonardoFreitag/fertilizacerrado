@@ -15,9 +15,11 @@ Infraestrutura base sem a qual nenhum módulo de domínio pode operar.
 
 | Módulo | Responsabilidade |
 |---|---|
-| Auth | Autenticação JWT, roles, recuperação de senha |
-| Usuários | Gestão de perfis por role |
+| Auth | Autenticação JWT, roles, verificação e recuperação de senha, reenvio de verificação |
+| Usuários | Administração de contas (ativar/desativar, roles, último admin), perfil próprio, troca de senha — `docs/modulos/usuarios.md` |
 | Propriedades e Talhões | Cadastro geoespacial (PostGIS) de fazendas e talhões |
+
+**Status: completa.** Qualidade contínua: CI do GitHub Actions (`.github/workflows/ci.yml` — typecheck e unitários do backend, lint/typecheck/unitários/build do frontend, unitários do ETL, build das três imagens). Backup: `pnpm db:backup`/`db:restore` em dev (`backend/scripts/db/`), serviço `backup` diário (03:30 BRT, volume `db_backups`) em produção; envio para S3 na Fase 2 de infra.
 
 ### Fase 1 — Módulo Agrometeorológico (MSA)
 Produto principal da dissertação. Processa dados ERA5-Land e entrega suporte à decisão por janela fenológica.

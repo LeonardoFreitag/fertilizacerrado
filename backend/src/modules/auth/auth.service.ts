@@ -16,7 +16,7 @@ import { authRepository } from './auth.repository';
 import type { LoginDto } from './dtos/login.dto';
 import type { RegisterDto } from './dtos/register.dto';
 import type { ResetPasswordDto } from './dtos/reset-password.dto';
-import { getLoginBlockSeconds, registerLoginFailure } from './login-rate-limit';
+import { getLoginBlockSeconds, registerLoginFailure, takeResendVerificationSlot } from './login-rate-limit';
 
 const BCRYPT_ROUNDS = 12;
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -123,6 +123,9 @@ export const authService = {
       throw new AppError(401, 'INVALID_CREDENTIALS', 'E-mail ou senha inválidos.');
     }
 
+    if (!user.active) {
+      throw new AppError(403, 'USER_INACTIVE', 'Sua conta está desativada. Fale com o administrador.');
+    }
     if (!user.emailVerified) {
       throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Confirme seu e-mail antes de entrar.');
     }
@@ -136,7 +139,7 @@ export const authService = {
   async refresh(refreshToken: string | undefined): Promise<Session> {
     const userId = refreshToken ? verifyRefreshToken(refreshToken) : null;
     const user = userId ? await authRepository.findById(userId) : null;
-    if (!refreshToken || !user) throw invalidRefreshToken();
+    if (!refreshToken || !user || !user.active) throw invalidRefreshToken();
 
     const session = issueSession(user);
     const rotated = await authRepository.rotateRefreshToken(
@@ -158,8 +161,22 @@ export const authService = {
   /** Perfil do usuário autenticado (restauração da sessão no frontend). */
   async me(userId: string): Promise<PublicUser> {
     const user = await authRepository.findById(userId);
-    if (!user) throw new AppError(401, 'UNAUTHORIZED', 'Usuário não encontrado.');
+    if (!user || !user.active) throw new AppError(401, 'UNAUTHORIZED', 'Usuário não encontrado ou desativado.');
     return toPublicUser(user);
+  },
+
+  /**
+   * Reenvio público da verificação: resposta idêntica exista ou não a conta;
+   * limite de 3/h por e-mail (429 com Retry-After acima disso).
+   */
+  async resendVerification(email: string): Promise<void> {
+    const wait = await takeResendVerificationSlot(email);
+    if (wait > 0) {
+      throw new AppError(429, 'TOO_MANY_REQUESTS', 'Muitos pedidos de reenvio. Tente novamente mais tarde.', { 'Retry-After': String(wait) });
+    }
+    const user = await authRepository.findByEmail(email);
+    if (!user || !user.active || user.emailVerified) return;
+    await sendVerificationEmail(user.email, user.name, signEmailVerificationToken(user.id));
   },
 
   async logout(refreshToken: string | undefined): Promise<void> {

@@ -155,7 +155,7 @@ test('admin: process-all mostra jobId e estado', async ({ page }) => {
   test.skip(!adminEmail || !adminPassword, 'ADMIN_EMAIL/ADMIN_PASSWORD ausentes no .env');
 
   await login(page, adminEmail!, adminPassword!);
-  await page.getByRole('link', { name: 'Admin' }).click();
+  await page.getByRole('link', { name: 'Admin', exact: true }).click(); // o nome do admin no cabeçalho também é link
   await expect(page.getByRole('heading', { name: 'Administração' })).toBeVisible();
   await expect(page.getByText('era5-ingest')).toBeVisible();
   await page.getByRole('button', { name: 'Processar todas as safras ativas' }).click();

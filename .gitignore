@@ -25,3 +25,6 @@ __pycache__/
 
 # Material bibliográfico de apoio (PDFs/DOCX de terceiros, ~1,8 GB) — não é código
 MaterialTeoricoApoio/
+
+# Dumps locais do banco (pnpm db:backup)
+backups/

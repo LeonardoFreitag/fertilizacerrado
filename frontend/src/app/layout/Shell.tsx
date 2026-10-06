@@ -17,6 +17,7 @@ const NAV: NavItem[] = [
   { to: '/talhoes', label: 'Talhões' },
   { to: '/safras', label: 'Safras' },
   { to: '/cultivares', label: 'Cultivares' },
+  { to: '/admin/usuarios', label: 'Usuários', adminOnly: true },
   { to: '/admin', label: 'Admin', adminOnly: true },
 ];
 
@@ -46,6 +47,7 @@ export function Shell() {
           <NavLink
             key={item.to}
             to={item.to}
+            end={item.to === '/admin'}
             onClick={() => setOpen(false)}
             className={({ isActive }) =>
               `rounded-md px-3 py-2 text-sm font-medium ${isActive ? 'bg-brand-100 text-brand-900' : 'text-slate-700 hover:bg-slate-100'}`
@@ -88,7 +90,9 @@ export function Shell() {
           <div className="ml-auto flex items-center gap-4">
             {user && (
               <div className="text-right leading-tight">
-                <div className="text-sm font-medium text-slate-800">{user.name}</div>
+                <NavLink to="/perfil" className="text-sm font-medium text-slate-800 hover:underline" title="Meu perfil">
+                  {user.name}
+                </NavLink>
                 <div className="text-xs text-slate-500">{ROLE_LABELS[user.role]}</div>
               </div>
             )}

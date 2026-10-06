@@ -178,8 +178,9 @@ login maria@fazenda.com 'NovaS3nha!';                                    check "
 flush
 
 echo "== CORS, helmet, erros =="
-H=$(curl -s -D - -o /dev/null -H 'Origin: http://localhost:5173' http://localhost:3000/health)
-contains "origem do frontend permitida" "$H" 'access-control-allow-origin: http://localhost:5173'
+FRONTEND_ORIGIN=$(grep '^FRONTEND_URL=' .env | cut -d= -f2-); FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://localhost}
+H=$(curl -s -D - -o /dev/null -H "Origin: $FRONTEND_ORIGIN" http://localhost:3000/health)
+contains "origem do frontend permitida" "$H" "access-control-allow-origin: $FRONTEND_ORIGIN"
 contains "credenciais permitidas" "$H" 'access-control-allow-credentials: true'
 contains "X-Content-Type-Options nosniff" "$H" 'x-content-type-options: nosniff'
 lacks "sem X-Powered-By" "$H" 'x-powered-by'

@@ -1,0 +1,2 @@
+# crontab do serviço `backup` (crond do alpine). TZ=America/Sao_Paulo vem do ambiente do contêiner.
+30 3 * * * /scripts/backup-cron.sh >> /proc/1/fd/1 2>&1

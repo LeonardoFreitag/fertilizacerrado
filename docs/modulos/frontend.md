@@ -56,7 +56,9 @@ frontend/
 | `/talhoes` | talhões agrupados por propriedade | autenticado |
 | `/cultivares`, `/cultivares/nova`, `/cultivares/:id` (leitura), `/cultivares/:id/editar` | cultivares | autenticado (escrita: AGRONOMO/ADMIN; referência só leitura) |
 | `/safras`, `/safras/nova`, `/safras/:id` (`/safras/:id/msa` redireciona) | safras e painel MSA | autenticado (escrita e reprocessar: AGRONOMO/ADMIN) |
-| `/admin` | filas BullMQ: contagens e ações | ADMIN (outros veem "Sem permissão") |
+| `/admin` | filas BullMQ: contagens e ações; estações e correção de viés | ADMIN (outros veem "Sem permissão") |
+| `/admin/usuarios` | administração de contas (editar, desativar/reativar, reenviar verificação, role) | ADMIN |
+| `/perfil` | dados próprios, troca de senha, role e verificação | autenticado |
 
 ## Fluxo de autenticação
 
@@ -90,7 +92,7 @@ Login responde `{ accessToken, user }` → `session.setSession`; logout chama `P
 - `ApiError` carrega `status`, `code`, `details` (do `VALIDATION_ERROR` do backend: `{ campo: [mensagens] }`) e `retryAfter` (header do 429).
 - `messageFor(error)` → mensagem pt-BR por código (`lib/api/errors.ts`); 5xx e falha de rede têm mensagens próprias; nunca o JSON bruto.
 - `applyFieldErrors(error, setError)` distribui `details` e conflitos (`EMAIL_ALREADY_REGISTERED` → `email`, `INVALID_OWNER` → `ownerId`…) nos campos; se nada se aplicou, a página mostra `messageFor`.
-- Login: 429 desabilita o botão e mostra contagem regressiva pelo `Retry-After`; 403 `EMAIL_NOT_VERIFIED` orienta a verificar o e-mail.
+- Login: 429 desabilita o botão e mostra contagem regressiva pelo `Retry-After`; 403 `EMAIL_NOT_VERIFIED` orienta a verificar o e-mail e oferece **Reenviar e-mail de verificação** (`POST /auth/resend-verification`); 403 `USER_INACTIVE` mostra "Sua conta está desativada".
 - Listas/detalhes usam `LoadingState`, `EmptyState`, `ErrorState` (com "Tentar novamente"); mutações confirmam com toast; ações destrutivas passam por `ConfirmDialog`.
 
 ## Mapa e talhões

@@ -6,15 +6,23 @@ Diretório mínimo de usuários (`GET /api/v1/users`) para a interface localizar
 ## Requirements
 
 ### Requirement: Busca de usuários
-O sistema SHALL oferecer `GET /api/v1/users?q=&role=&limit=` autenticado, devolvendo até `limit` (padrão 20, máximo 50) usuários com `id`, `name`, `email` e `role`, ordenados por nome, cujo nome ou e-mail contenha `q` (sem distinção de caixa). `ADMIN` MAY pesquisar qualquer role e sem `q`. `AGRONOMO` MUST receber apenas `PRODUTOR` (qualquer `role` informada diferente disso ⇒ 403 `FORBIDDEN`) e MUST informar `q` com no mínimo 3 caracteres (senão 400 `VALIDATION_ERROR`). `PRODUTOR` MUST receber 403.
+O sistema SHALL oferecer `GET /api/v1/users?q=&role=&active=&page=&pageSize=` autenticado, devolvendo `{ items, page, pageSize, total }` com `pageSize` padrão 20 e máximo 50, ordenado por nome, filtrando por nome ou e-mail contendo `q` (sem distinção de caixa), por `role` e por `active`. Para `ADMIN` os itens MUST trazer `id`, `name`, `email`, `role`, `active`, `emailVerified`, `phone`, `crea`, documento mascarado e `createdAt`, e `ADMIN` MAY pesquisar sem `q`. `AGRONOMO` MUST receber apenas `PRODUTOR` ativos com `id`, `name`, `email` e `role` (qualquer `role` informada diferente de `PRODUTOR` ⇒ 403 `FORBIDDEN`) e MUST informar `q` com no mínimo 3 caracteres (senão 400 `VALIDATION_ERROR`). `PRODUTOR` MUST receber 403.
 
 #### Scenario: Admin lista produtores
 - **WHEN** um `ADMIN` chama `GET /users?role=PRODUTOR`
-- **THEN** recebe até 20 produtores ordenados por nome
+- **THEN** recebe `items` com até 20 produtores ordenados por nome, `total` com a contagem e os campos administrativos
+
+#### Scenario: Paginação
+- **WHEN** um `ADMIN` chama `GET /users?page=2&pageSize=10` com 25 usuários
+- **THEN** recebe 10 itens (do 11º ao 20º) e `total = 25`
+
+#### Scenario: Filtro de ativos
+- **WHEN** um `ADMIN` chama `GET /users?active=false`
+- **THEN** recebe só usuários desativados
 
 #### Scenario: Agrônomo pesquisa
 - **WHEN** um `AGRONOMO` chama `GET /users?q=ped`
-- **THEN** recebe só usuários `PRODUTOR` cujo nome ou e-mail contém "ped"
+- **THEN** recebe só usuários `PRODUTOR` ativos cujo nome ou e-mail contém "ped", sem campos administrativos
 
 #### Scenario: Agrônomo sem termo
 - **WHEN** um `AGRONOMO` chama `GET /users` ou `GET /users?q=pe`
