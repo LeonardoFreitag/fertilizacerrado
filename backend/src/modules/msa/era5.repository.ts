@@ -81,6 +81,12 @@ export const era5Repository = {
   },
 
   /** Dias esperados, presentes e ausentes do talhão em [from, to]; null sem célula. */
+  /** Célula ERA5 do talhão (lat/lon da grade), ou null. */
+  async getCell(fieldId: string): Promise<{ cellLat: number; cellLon: number } | null> {
+    const cell = await cellOfField(fieldId);
+    return cell ? { cellLat: Number(cell.cellLat), cellLon: Number(cell.cellLon) } : null;
+  },
+
   async getCoverage(fieldId: string, from: string, to: string): Promise<Coverage | null> {
     const cell = await cellOfField(fieldId);
     if (!cell) return null;

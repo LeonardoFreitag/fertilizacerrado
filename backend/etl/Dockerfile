@@ -15,8 +15,9 @@ COPY pytest.ini ./
 
 # Usuário não-root; o cache dos NetCDF fica no volume etl_cache
 RUN useradd --system --uid 1001 --create-home etl \
-    && mkdir -p /data/cache \
-    && chown -R etl:etl /data/cache /app
+    && mkdir -p /data/cache /data/station-imports \
+    && chown -R etl:etl /data/cache /app \
+    && chmod 777 /data/station-imports
 USER etl
 
 # Padrão: worker BullMQ (fila era5-ingest). CLI: `docker compose run --rm etl <comando>`

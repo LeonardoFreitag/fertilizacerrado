@@ -35,8 +35,8 @@ model User {
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  ownedProperties      Property[] @relation("PropertyOwner")
-  supervisedProperties Property[] @relation("PropertyAgronomist")
+  ownedProperties      Property[]    @relation("PropertyOwner")
+  supervisedProperties Property[]    @relation("PropertyAgronomist")
   cultivars            Cultivar[]
   msaRuns              MsaRun[]
   msaDecisions         MsaDecision[]
@@ -75,24 +75,24 @@ model Property {
 /// create/update para este model, e toda escrita/leitura delas é feita em SQL
 /// parametrizado no property.repository.
 model Field {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String                                 @id @default(uuid()) @db.Uuid
   name       String
-  propertyId String   @map("property_id") @db.Uuid
+  propertyId String                                 @map("property_id") @db.Uuid
   /// Área em hectares (informada ou ST_Area/10000)
-  areaHa     Decimal  @map("area_ha") @db.Decimal(12, 2)
+  areaHa     Decimal                                @map("area_ha") @db.Decimal(12, 2)
   geometry   Unsupported("geography(Polygon,4326)")
   /// ST_Centroid(geometry), recalculado a cada alteração da geometria
   centroid   Unsupported("geography(Point,4326)")
-  soilType   String?  @map("soil_type")
+  soilType   String?                                @map("soil_type")
   notes      String?
   /// Altitude (m) — obrigatória para o MSA (entra em P e γ da ET₀); sem default
-  altitudeM  Float?   @map("altitude_m")
+  altitudeM  Float?                                 @map("altitude_m")
   /// Umidade volumétrica na capacidade de campo e no ponto de murcha (m³/m³);
   /// sem valores, o MSA usa 0,28/0,12 (Latossolo Vermelho) e registra no snapshot
-  thetaFC    Float?   @map("theta_fc")
-  thetaWP    Float?   @map("theta_wp")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  thetaFC    Float?                                 @map("theta_fc")
+  thetaWP    Float?                                 @map("theta_wp")
+  createdAt  DateTime                               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime                               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   property Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   era5Cell Era5Cell?
@@ -216,25 +216,28 @@ enum IngestionStatus {
 /// por célula: os talhões chegam à série via era5_cells. Escrita pelo ETL
 /// Python; o Node só lê.
 model Era5DailyData {
-  time        DateTime @db.Date
-  cellLat     Decimal  @map("cell_lat") @db.Decimal(4, 1)
-  cellLon     Decimal  @map("cell_lon") @db.Decimal(5, 1)
+  time            DateTime       @db.Date
+  cellLat         Decimal        @map("cell_lat") @db.Decimal(4, 1)
+  cellLon         Decimal        @map("cell_lon") @db.Decimal(5, 1)
   /// Temperaturas em °C
-  t2mMax      Float    @map("t2m_max") @db.Real
-  t2mMin      Float    @map("t2m_min") @db.Real
-  t2mMean     Float    @map("t2m_mean") @db.Real
+  t2mMax          Float          @map("t2m_max") @db.Real
+  t2mMin          Float          @map("t2m_min") @db.Real
+  t2mMean         Float          @map("t2m_mean") @db.Real
   /// Ponto de orvalho médio (°C)
-  d2mMean     Float    @map("d2m_mean") @db.Real
+  d2mMean         Float          @map("d2m_mean") @db.Real
   /// Vento a 2 m (m/s), já convertido de 10 m
-  u2          Float    @db.Real
+  u2              Float          @db.Real
   /// Saldo de radiação (MJ/m²/dia) = (ssr + str) / 1e6
-  rn          Float    @db.Real
+  rn              Float          @db.Real
   /// Precipitação bruta e corrigida (mm); iguais até a change de Quantile Mapping
-  tpRaw       Float    @map("tp_raw") @db.Real
-  tpCorrected Float    @map("tp_corrected") @db.Real
-  qmApplied   Boolean  @default(false) @map("qm_applied")
-  source      String   @default("era5-land")
-  ingestedAt  DateTime @default(now()) @map("ingested_at") @db.Timestamptz(3)
+  tpRaw           Float          @map("tp_raw") @db.Real
+  tpCorrected     Float          @map("tp_corrected") @db.Real
+  qmApplied       Boolean        @default(false) @map("qm_applied")
+  /// Calibração QM que produziu tp_corrected (nula quando qm_applied = false)
+  qmCalibrationId String?        @map("qm_calibration_id") @db.Uuid
+  qmCalibration   QmCalibration? @relation(fields: [qmCalibrationId], references: [id], onDelete: SetNull)
+  source          String         @default("era5-land")
+  ingestedAt      DateTime       @default(now()) @map("ingested_at") @db.Timestamptz(3)
 
   @@id([time, cellLat, cellLon])
   @@index([cellLat, cellLon, time])
@@ -296,29 +299,32 @@ enum MsaRunReason {
 /// reproduzir o cálculo: intervalo, semente, iterações, sigmas, snapshots da
 /// cultivar e do solo e a versão do motor.
 model MsaRun {
-  id               String       @id @default(uuid()) @db.Uuid
-  harvestId        String       @map("harvest_id") @db.Uuid
+  id               String         @id @default(uuid()) @db.Uuid
+  harvestId        String         @map("harvest_id") @db.Uuid
   status           MsaRunStatus
-  startedAt        DateTime     @map("started_at") @db.Timestamptz(3)
-  finishedAt       DateTime     @map("finished_at") @db.Timestamptz(3)
-  dateFrom         DateTime     @map("date_from") @db.Date
-  dateTo           DateTime     @map("date_to") @db.Date
+  startedAt        DateTime       @map("started_at") @db.Timestamptz(3)
+  finishedAt       DateTime       @map("finished_at") @db.Timestamptz(3)
+  dateFrom         DateTime       @map("date_from") @db.Date
+  dateTo           DateTime       @map("date_to") @db.Date
   seed             Int?
   iterations       Int?
-  sigmaPrecip      Float?       @map("sigma_precip")
-  sigmaTemp        Float?       @map("sigma_temp")
+  sigmaPrecip      Float?         @map("sigma_precip")
+  sigmaTemp        Float?         @map("sigma_temp")
   /// Os 15 parâmetros científicos + id, name, crop, como estavam no momento
-  cultivarSnapshot Json         @map("cultivar_snapshot")
+  cultivarSnapshot Json           @map("cultivar_snapshot")
   /// { thetaFC, thetaWP, altitudeM, soilDefaults }
-  soilSnapshot     Json         @map("soil_snapshot")
-  engineVersion    String       @map("engine_version")
+  soilSnapshot     Json           @map("soil_snapshot")
+  engineVersion    String         @map("engine_version")
   /// Datas YYYY-MM-DD ausentes (status NEEDS_DATA)
-  missingDates     Json?        @map("missing_dates")
+  missingDates     Json?          @map("missing_dates")
   error            String?
-  triggeredById    String?      @map("triggered_by_id") @db.Uuid
-  reason           MsaRunReason @default(MANUAL)
+  triggeredById    String?        @map("triggered_by_id") @db.Uuid
+  reason           MsaRunReason   @default(MANUAL)
   /// Id do job BullMQ que gerou a run (nulo em runs inline)
-  jobId            String?      @map("job_id")
+  jobId            String?        @map("job_id")
+  /// Calibração QM ativa da célula no momento do processamento (reprodutibilidade)
+  qmCalibrationId  String?        @map("qm_calibration_id") @db.Uuid
+  qmCalibration    QmCalibration? @relation(fields: [qmCalibrationId], references: [id], onDelete: SetNull)
 
   harvest        Harvest           @relation("HarvestRuns", fields: [harvestId], references: [id], onDelete: Cascade)
   latestOf       Harvest?          @relation("HarvestLatestRun")
@@ -357,23 +363,23 @@ model MsaDailyResult {
 
 /// Resumo de uma janela (baseline + percentis do Monte Carlo).
 model MsaPhaseSummary {
-  runId             String  @map("run_id") @db.Uuid
+  runId             String @map("run_id") @db.Uuid
   phase             String
   days              Int
-  ksMean            Float?  @map("ks_mean")
-  etcAdjAccum       Float   @map("etc_adj_accum")
-  precipAccum       Float   @map("precip_accum")
-  yieldReductionPct Float?  @map("yield_reduction_pct")
-  validIterations   Int     @map("valid_iterations")
-  ksMeanP10         Float?  @map("ks_mean_p10")
-  ksMeanP50         Float?  @map("ks_mean_p50")
-  ksMeanP90         Float?  @map("ks_mean_p90")
-  yieldReductionP10 Float?  @map("yield_reduction_p10")
-  yieldReductionP50 Float?  @map("yield_reduction_p50")
-  yieldReductionP90 Float?  @map("yield_reduction_p90")
-  etcAdjAccumP10    Float?  @map("etc_adj_accum_p10")
-  etcAdjAccumP50    Float?  @map("etc_adj_accum_p50")
-  etcAdjAccumP90    Float?  @map("etc_adj_accum_p90")
+  ksMean            Float? @map("ks_mean")
+  etcAdjAccum       Float  @map("etc_adj_accum")
+  precipAccum       Float  @map("precip_accum")
+  yieldReductionPct Float? @map("yield_reduction_pct")
+  validIterations   Int    @map("valid_iterations")
+  ksMeanP10         Float? @map("ks_mean_p10")
+  ksMeanP50         Float? @map("ks_mean_p50")
+  ksMeanP90         Float? @map("ks_mean_p90")
+  yieldReductionP10 Float? @map("yield_reduction_p10")
+  yieldReductionP50 Float? @map("yield_reduction_p50")
+  yieldReductionP90 Float? @map("yield_reduction_p90")
+  etcAdjAccumP10    Float? @map("etc_adj_accum_p10")
+  etcAdjAccumP50    Float? @map("etc_adj_accum_p50")
+  etcAdjAccumP90    Float? @map("etc_adj_accum_p90")
 
   run MsaRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
@@ -402,4 +408,81 @@ model MsaDecision {
 
   @@index([harvestId, createdAt])
   @@map("msa_decisions")
+}
+
+// ---------------------------------------------------------------------------
+// Estações meteorológicas e correção de viés (Quantile Mapping)
+// ---------------------------------------------------------------------------
+
+enum StationSource {
+  INMET
+  ANA
+  OUTRA
+
+  @@map("station_source")
+}
+
+/// Estação de observação (INMET/ANA/outra). Escrita pelo ETL (importação de
+/// CSV); o Node só lê. `geometry` é geography(Point,4326) em SQL cru.
+model WeatherStation {
+  code      String                               @id
+  name      String
+  source    StationSource
+  lat       Float
+  lon       Float
+  altitudeM Float?                               @map("altitude_m")
+  geometry  Unsupported("geography(Point,4326)")
+  active    Boolean                              @default(true)
+  createdAt DateTime                             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime                             @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  observations StationDailyObs[]
+  calibrations QmCalibration[]
+
+  @@map("weather_stations")
+}
+
+/// Observações diárias (hipertabela por date, chunk de 1 ano).
+model StationDailyObs {
+  stationCode String   @map("station_code")
+  date        DateTime @db.Date
+  precipMm    Float?   @map("precip_mm") @db.Real
+  tmax        Float?   @db.Real
+  tmin        Float?   @db.Real
+  sourceFile  String?  @map("source_file")
+  importedAt  DateTime @default(now()) @map("imported_at") @db.Timestamptz(3)
+
+  station WeatherStation @relation(fields: [stationCode], references: [code], onDelete: Cascade)
+
+  @@id([stationCode, date])
+  @@index([date(sort: Desc)], map: "station_daily_obs_date_idx")
+  @@map("station_daily_obs")
+}
+
+/// Calibração QM de uma célula contra uma estação. Uma ativa por
+/// (célula, variável) — índice único parcial em SQL cru. Nunca apagada.
+model QmCalibration {
+  id                 String   @id @default(uuid()) @db.Uuid
+  cellLat            Decimal  @map("cell_lat") @db.Decimal(4, 1)
+  cellLon            Decimal  @map("cell_lon") @db.Decimal(5, 1)
+  stationCode        String   @map("station_code")
+  variable           String   @default("tp")
+  method             String
+  periodFrom         DateTime @map("period_from") @db.Date
+  periodTo           DateTime @map("period_to") @db.Date
+  nDaysByMonth       Json     @map("n_days_by_month")
+  wetDayThresholdObs Float    @map("wet_day_threshold_obs") @db.Real
+  wetThresholdsEra5  Json     @map("wet_thresholds_era5")
+  quantiles          Json
+  maxRatio           Float    @map("max_ratio") @db.Real
+  distanceKm         Float    @map("distance_km") @db.Real
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  station   WeatherStation  @relation(fields: [stationCode], references: [code])
+  dailyRows Era5DailyData[]
+  msaRuns   MsaRun[]
+
+  @@index([cellLat, cellLon, variable, active])
+  @@map("qm_calibrations")
 }

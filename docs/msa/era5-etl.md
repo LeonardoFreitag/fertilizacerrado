@@ -139,47 +139,59 @@ Esses casos são cobertos por `tests/test_transform.py` com uma fixture NetCDF s
 ## Etapa 3 — Correção de Viés (Quantile Mapping)
 
 ### Problema
-O ERA5-Land apresenta viés sistemático de precipitação no Cerrado brasileiro, especialmente:
-- Subestimação de eventos convectivos intensos
-- Superestimação da frequência de dias com chuva fraca
+O ERA5-Land apresenta viés sistemático de precipitação no Cerrado: superestima a frequência de dias com chuva fraca ("garoa" da reanálise) e subestima os eventos convectivos intensos. O balanço hídrico do MSA lê `tp_corrected`; sem calibração, `tp_corrected = tp_raw`.
 
-### Método: Quantile Mapping (QM)
+### Método: QM empírico mensal em duas etapas (`empirical-monthly-v1`)
+Implementado em `backend/etl/era5/qm.py` (funções puras) e `qm_ops.py` (banco). Por **mês do ano** `m`, sobre os dias de sobreposição válida (ERA5 e observação presentes) no período de calibração:
 
-O Quantile Mapping corrige a distribuição cumulativa da variável reanalisada para aproximá-la da distribuição observada:
+1. **Frequência de dias chuvosos.** `f_obs(m)` é a fração de dias observados com chuva `> QM_WET_DAY_MM` (default 0,1 mm). O limiar do ERA5 é o quantil `1 − f_obs(m)` da série ERA5 do mês: valores `≤ θ_era5(m)` viram **0**. Assim a fração de dias chuvosos corrigida iguala a observada.
+2. **Intensidade.** Nos dias chuvosos de cada série (ERA5 `> θ_era5(m)`, observação `> QM_WET_DAY_MM`), 99 quantis (1–99 %) `q_era5[k]`, `q_obs[k]`. Aplicação: `tp_corr = interp(tp_raw, q_era5, q_obs)` (linear; abaixo do P1, escala linear até 0). **Acima do P99**: razão constante do último quantil, limitada a `QM_MAX_RATIO` (default 3) — extrapolação por razão evita achatar extremos não vistos na calibração, e o limite evita explodi-los.
 
-$$P_{corr} = F_{obs}^{-1}\left[F_{era5}(P_{era5})\right]$$
+$$P_{corr} = F_{obs}^{-1}\left[F_{era5}(P_{era5})\right]$$ para `P_era5 > θ_era5(m)`; `0` caso contrário.
 
-**Onde:**
-- $F_{era5}$ = CDF empírica da precipitação ERA5-Land no período de calibração
-- $F_{obs}$ = CDF empírica da precipitação observada (estações INMET/ANA)
-- $F_{obs}^{-1}$ = função quantil (inversa da CDF) da distribuição observada
+Casos de borda: mês sem dia chuvoso observado ⇒ `θ = +∞` (tudo zero); mês sem dia chuvoso no ERA5 ⇒ identidade acima do limiar. Só precipitação nesta versão (temperatura: mesma estrutura, `variable = 't2m'`, futuro).
 
-### Calibração
-- **Período de calibração:** 10 anos de dados históricos sobrepostos (ERA5-Land vs. INMET)
-- **Estações de referência:** rede INMET e ANA, priorizando estações no interior ou adjacentes ao estado do talhão
-- **Frequência:** recalibração anual (cron job de janeiro)
-- **Armazenamento:** os parâmetros QM (mapeamento de quantis) são persistidos no banco como vetores JSON por célula ERA5-Land e variável
+### Observações: estações e importação
+- `weather_stations` (código, nome, fonte `INMET|ANA|OUTRA`, lat/lon, altitude, geometria PostGIS, ativa) e `station_daily_obs` (hipertabela por data: `precip_mm`, `tmax`/`tmin` opcionais, arquivo de origem).
+- Importador (`stations.py`): **BDMEP/INMET** diário (cabeçalho de metadados com código/lat/lon/altitude, `;`, vírgula decimal) ou **genérico** (`station_code,date,precip_mm[,tmax,tmin]`). Upsert por `(station_code, date)`; linhas inválidas são contadas, não abortam. Download do BDMEP fica fora (exige login) — ver `backend/etl/README.md`.
+- Fluxo: `POST /api/v1/admin/stations/upload` (ADMIN, multipart, zona `api_upload` do Nginx) grava no volume `station_imports` e enfileira `era5-ingest {kind: "station-import"}`; o worker importa, registra a run e apaga o arquivo. CLI: `stations import <arquivo> --format bdmep|generic`, `stations list`.
 
-```python
-# era5_bias_correct.py — implementação com scikit-learn / scipy
-from scipy.interpolate import interp1d
-import numpy as np
+### Pareamento célula ↔ estação
+Estação **ativa mais próxima** do nó da célula (haversine) dentro de `QM_MAX_DISTANCE_KM` (default 50) com ao menos `QM_MIN_YEARS` (default 10) de sobreposição válida. Sem estação elegível a célula fica sem calibração e a run registra o aviso (`qm calibrate --auto` segue para as demais).
 
-def quantile_mapping(era5_series, qm_params):
-    """
-    qm_params: dict com 'era5_quantiles' e 'obs_quantiles' (vetores de comprimento N)
-    """
-    f_qm = interp1d(
-        qm_params['era5_quantiles'],
-        qm_params['obs_quantiles'],
-        bounds_error=False,
-        fill_value=(qm_params['obs_quantiles'][0], qm_params['obs_quantiles'][-1])
-    )
-    return f_qm(era5_series)
-```
+### Tabela `qm_calibrations`
+| Campo | Descrição |
+|---|---|
+| `cell_lat`, `cell_lon`, `station_code`, `variable` (`tp`) | célula calibrada e estação usada |
+| `method` | `empirical-monthly-v1` |
+| `period_from`, `period_to`, `n_days_by_month` | período e base de dias válidos por mês |
+| `wet_day_threshold_obs`, `wet_thresholds_era5` | limiar observado (config) e os 12 limiares do ERA5 |
+| `quantiles` | por mês: `era5[]` e `obs[]` (99 valores) |
+| `max_ratio`, `distance_km` | configuração efetiva e distância da estação |
+| `active`, `created_at` | **uma ativa por célula/variável** (índice único parcial); recalibrar desativa a anterior, nunca apaga |
+
+### Aplicação
+- **No load** de cada ingestão (`load.py`): a calibração ativa da célula preenche `tp_corrected`, `qm_applied = true` e `qm_calibration_id`; sem calibração, `tp_corrected = tp_raw`.
+- **Sob demanda**: `qm apply --cell LAT LON | --all` reaplica nas linhas existentes, sempre a partir de `tp_raw` (idempotente). Recalibrar + `apply` troca o `qm_calibration_id` das linhas.
+- **Reprodutibilidade**: cada run do MSA grava `qm_calibration_id` (calibração ativa da célula no momento); o painel mostra "Chuva corrigida — estação X (N anos, D km)" ou "Chuva sem correção". Runs antigas não mudam quando a célula é recalibrada; só uma run nova referencia a calibração nova. **`qm apply` não reprocessa safras** — use "Processar todas as safras ativas".
+
+### Jobs e agendamento
+Fila `era5-ingest` (concorrência 1 — serializa calibração com ingestão): `station-import`, `qm-calibrate` (`{cell, station}` ou `{auto: true}`, sempre seguido de `apply`), `qm-apply`. Agendador anual `qm-annual-trigger` (`0 3 1 1 *`, `America/Sao_Paulo`) no worker Node ⇒ `qm-calibrate {auto: true}`. Endpoints ADMIN: `GET /admin/stations`, `POST /admin/stations/upload`, `GET /admin/qm/calibrations`, `POST /admin/qm/calibrate`; botões na página `/admin`.
+
+### Validação (Caso 4) e testes
+`python -m era5.cli qm validate --cell LAT LON --station CODE --calib-years 2010-2019 --test-years 2020-2024 [--csv saida.csv]`: calibra em A sem persistir, aplica em B e imprime RMSE, PBIAS e fração de dias chuvosos (bruto × corrigido × observado) por mês e total. Testes (`tests/test_qm.py`) usam uma estação sintética com viés conhecido (ERA5 × 1,3 nos dias chuvosos, garoa < 0,5 mm removida): a calibração recupera a fração de dias chuvosos (±1 p.p.) e leva o PBIAS de ≈ −20 % para < 2 %. O roteiro `e2e-qm.sh` cobre upload → calibração → aplicação → run com `qmCalibrationId`.
+
+### Configuração
+`QM_MAX_DISTANCE_KM`, `QM_MIN_YEARS`, `QM_WET_DAY_MM`, `QM_MAX_RATIO` (defaults 50, 10, 0,1, 3) — lidas pelo `etl` e gravadas em cada calibração; ver `docs/msa/questoes-abertas.md` item 6.
+
+### Limitações conhecidas
+- Pareamento por data-calendário: o BDMEP é dia local, o ERA5 é dia UTC (questão aberta nº 2).
+- Cauda acima do P99 por razão limitada (alternativa paramétrica gama: questão nº 6).
+- Mês com menos de 30 dias chuvosos observados gera aviso (quantis instáveis), sem bloquear.
 
 ### Referência bibliográfica
-> PIANI, C. et al. (2010). Statistical bias correction of global simulated daily precipitation and temperature for the application of hydrological models. *Journal of Hydrology*, 395(3-4), 199–215.  
+> PIANI, C. et al. (2010). Statistical bias correction of global simulated daily precipitation and temperature for the application of hydrological models. *Journal of Hydrology*, 395(3-4), 199–215.
+> THEMEẞL, M. J.; GOBIET, A.; HEINRICH, G. (2012). Empirical-statistical downscaling and error correction of regional climate models and its impact on the climate change signal. *Climatic Change*, 112, 449–468.
 > MARAUN, D. (2016). Bias correcting climate change simulations – a critical review. *Current Climate Change Reports*, 2(4), 211–220.
 
 ---
@@ -262,6 +274,6 @@ A API só **enfileira**; nenhuma réplica instancia worker ou agendador.
 | Lag de ~5 dias do ERA5-Land | Aceito; trabalha com janelas fenológicas consolidadas |
 | Sem dados em tempo real | Fora do escopo do MSA; retrospectivo por design |
 | Resolução ~9 km | Adequada para o Cerrado; variabilidade sub-grade não modelada |
-| QM requer estações próximas | Estações INMET/ANA cobrindo o Cerrado são suficientes para calibração estadual |
+| QM requer estações próximas | Pareamento célula ↔ estação ativa mais próxima (≤ 50 km, ≥ 10 anos, configurável); célula sem estação elegível fica sem correção, com aviso |
 | Custo da API CDS | API gratuita para pesquisa; cache por `(bbox, mês/trimestre)` no volume `etl_cache` evita repetir requisições |
 | Heartbeat durante a fila do CDS | `updated_at` só muda por período concluído; uma requisição de 2 h sem resposta deixa a run sem heartbeat por 2 h — por isso o limite de órfã é 6 h |

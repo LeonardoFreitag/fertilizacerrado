@@ -11,6 +11,9 @@ import { QUEUES } from '../../config/queue';
 export const WEEKLY_CRON = '0 2 * * 1';
 export const WEEKLY_TZ = 'America/Sao_Paulo';
 export const WEEKLY_SCHEDULER_ID = 'msa-weekly-trigger';
+/** 1º de janeiro 03:00 (Brasília): recalibra o QM de todas as células e reaplica. */
+export const ANNUAL_CRON = '0 3 1 1 *';
+export const ANNUAL_SCHEDULER_ID = 'qm-annual-trigger';
 
 /** Lag do ERA5-Land com margem — o mesmo do ETL e do msa.service. */
 export const DATA_LAG_DAYS = 6;
@@ -18,7 +21,10 @@ export const DATA_LAG_DAYS = 6;
 export type IngestJobData =
   | { kind: 'latest' }
   | { kind: 'range'; from: string; to: string; bbox?: [number, number, number, number] }
-  | { kind: 'cell'; lat: number; lon: number; from: string; to: string };
+  | { kind: 'cell'; lat: number; lon: number; from: string; to: string }
+  | { kind: 'station-import'; path: string; format: 'bdmep' | 'generic'; stationMeta?: string }
+  | { kind: 'qm-calibrate'; auto?: boolean; cell?: { lat: number; lon: number }; station?: string; from?: string; to?: string }
+  | { kind: 'qm-apply'; cell?: { lat: number; lon: number } };
 
 export interface ProcessJobData {
   harvestId: string;
@@ -26,7 +32,7 @@ export interface ProcessJobData {
   reason: MsaRunReason;
 }
 
-export const JOB_NAMES = { ingest: 'ingest', process: 'process', weeklyTrigger: 'trigger', weeklyRun: 'run' } as const;
+export const JOB_NAMES = { ingest: 'ingest', process: 'process', weeklyTrigger: 'trigger', weeklyRun: 'run', annualTrigger: 'qm-annual' } as const;
 
 /** Ids determinísticos: reexecuções não duplicam jobs. */
 /** Ids determinísticos (dedupe). O BullMQ proíbe `:` em ids customizados. */

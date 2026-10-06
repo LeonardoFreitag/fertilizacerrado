@@ -20,6 +20,12 @@ class Settings:
     cds_api_key: str | None
     cache_dir: str
     redis_url: str | None = None
+    station_imports_dir: str = "./station-imports"
+    # Correção de viés (Quantile Mapping) — defaults documentados em docs/msa/questoes-abertas.md item 6
+    qm_max_distance_km: float = 50.0
+    qm_min_years: int = 10
+    qm_wet_day_mm: float = 0.1
+    qm_max_ratio: float = 3.0
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -33,6 +39,11 @@ class Settings:
             cds_api_key=env.get("CDS_API_KEY", "").strip() or None,
             cache_dir=env.get("ETL_CACHE_DIR", "").strip() or "./cache",
             redis_url=env.get("REDIS_URL", "").strip() or None,
+            station_imports_dir=env.get("STATION_IMPORTS_DIR", "").strip() or "./station-imports",
+            qm_max_distance_km=float(env.get("QM_MAX_DISTANCE_KM", "") or 50.0),
+            qm_min_years=int(env.get("QM_MIN_YEARS", "") or 10),
+            qm_wet_day_mm=float(env.get("QM_WET_DAY_MM", "") or 0.1),
+            qm_max_ratio=float(env.get("QM_MAX_RATIO", "") or 3.0),
         )
 
     def require_redis_url(self) -> str:

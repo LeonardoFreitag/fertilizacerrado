@@ -111,6 +111,7 @@ test('safra → processamento → painel → cenários → decisão → CSV', as
   await expect(page.getByRole('heading', { name: 'Módulo agrometeorológico (MSA)' })).toBeVisible({ timeout: 5 * 60_000 });
   expect(pageErrors, pageErrors.join('\n')).toEqual([]);
   await expect(page.getByText('SUCCEEDED').first()).toBeVisible();
+  await expect(page.getByTestId('rain-badge')).toContainText('sem correção'); // célula sem calibração QM
   for (const phase of ['F1', 'F2', 'F3', 'F4']) {
     const card = page.getByTestId(`phase-card-${phase}`);
     await expect(card).toBeVisible();

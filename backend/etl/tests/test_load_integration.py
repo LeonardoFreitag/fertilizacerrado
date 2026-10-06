@@ -100,3 +100,45 @@ def test_cells_in_bbox(conn):
     cells = db.cells_in_bbox(conn, (90.0, -180.0, -90.0, 180.0))
     assert cells == db.distinct_cells(conn)
     assert db.cells_in_bbox(conn, (-89.0, 170.0, -89.5, 171.0)) == []
+
+
+def test_calibration_one_active_and_apply_idempotent(conn):
+    """Índice parcial: uma calibração ativa por célula; apply parte de tp_raw."""
+    import numpy as np
+
+    from era5 import qm, qm_ops, stations
+    from era5.synthetic import synthetic_era5, synthetic_obs
+
+    cell = (-89.8, 179.8)
+    code = "PYTEST-QM"
+    conn.execute("DELETE FROM qm_calibrations WHERE station_code = %s", (code,))
+    conn.execute("DELETE FROM era5_daily_data WHERE cell_lat = %s AND cell_lon = %s", cell)
+    conn.commit()
+    try:
+        dates, era5 = synthetic_era5(years=1, seed=7, start=date(2020, 1, 1))
+        db.upsert_station(conn, stations.StationMeta(code, "pytest", "OUTRA", cell[0] + 0.05, cell[1]))
+        db.upsert_obs(conn, ((code, d, float(v), None, None) for d, v in zip(dates, synthetic_obs(era5))), "pytest")
+        db.upsert_daily(conn, ((d, cell[0], cell[1], 30, 18, 24, 17, 1.5, 12, float(v), float(v), False, None, "pytest") for d, v in zip(dates, era5)))
+        cfg = qm.QmConfig(min_years=0.5)
+        cal = qm.calibrate(dates, era5, synthetic_obs(era5), cfg)
+        first = db.save_calibration(conn, cell, code, cal, 5.0)
+        second = db.save_calibration(conn, cell, code, cal, 5.0)
+        rows = conn.execute("SELECT id, active FROM qm_calibrations WHERE station_code = %s ORDER BY created_at", (code,)).fetchall()
+        assert [str(r["id"]) for r in rows] == [first, second]
+        assert [r["active"] for r in rows] == [False, True]
+        n1 = qm_ops.apply_cell(conn, cell)
+        a = db.cell_raw_series(conn, cell)
+        corrected1 = conn.execute("SELECT time, tp_corrected FROM era5_daily_data WHERE cell_lat=%s AND cell_lon=%s ORDER BY time", cell).fetchall()
+        n2 = qm_ops.apply_cell(conn, cell)
+        corrected2 = conn.execute("SELECT time, tp_corrected FROM era5_daily_data WHERE cell_lat=%s AND cell_lon=%s ORDER BY time", cell).fetchall()
+        assert n1 == n2 == len(a)
+        assert [r["tp_corrected"] for r in corrected1] == [r["tp_corrected"] for r in corrected2]
+        flagged = conn.execute("SELECT count(*) AS n FROM era5_daily_data WHERE cell_lat=%s AND cell_lon=%s AND qm_applied AND qm_calibration_id = %s", (cell[0], cell[1], second)).fetchone()["n"]
+        assert flagged == len(a)
+        assert not np.allclose([r["tp_corrected"] for r in corrected1], list(a.values()))  # algo mudou
+    finally:
+        conn.execute("UPDATE qm_calibrations SET active = false WHERE station_code = %s", (code,))
+        conn.execute("DELETE FROM era5_daily_data WHERE cell_lat = %s AND cell_lon = %s", cell)
+        conn.execute("DELETE FROM qm_calibrations WHERE station_code = %s", (code,))
+        conn.execute("DELETE FROM weather_stations WHERE code = %s", (code,))
+        conn.commit()

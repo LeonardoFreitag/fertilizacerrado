@@ -110,13 +110,17 @@ Login responde `{ accessToken, user }` → `session.setSession`; logout chama `P
 
 ## Painel MSA (`/safras/:id`)
 
-- **Cabeçalho**: intervalo, janela atual, status, run (id, data, origem, semente, iterações/σ, `engineVersion`), Reprocessar (202 + polling), exportação CSV; aviso quando a tentativa mais recente é `NEEDS_DATA`/`FAILED` (o painel mostra a última `SUCCEEDED`).
+- **Cabeçalho**: intervalo, janela atual, status, run (id, data, origem, semente, iterações/σ, `engineVersion`), **selo da chuva** ("Chuva corrigida — estação X (código, N anos, D km)" a partir de `run.qmCalibration`, ou "Chuva sem correção (ERA5-Land bruto)"), Reprocessar (202 + polling), exportação CSV; aviso quando a tentativa mais recente é `NEEDS_DATA`/`FAILED` (o painel mostra a última `SUCCEEDED`).
 - **Linha do tempo** (`phaseRanges`): barras proporcionais aos dias de cada janela presentes na série, datas, marcador "hoje", janelas não alcançadas tracejadas.
 - **Cartões** (`severity`): Ks médio, percentis P10/P50/P90, redução de produtividade, ETc_adj e chuva acumuladas, dias/iterações; cor + rótulo: ok ≥ 0,85, atenção 0,70–0,85, crítico < 0,70, cinza quando não alcançada.
 - **Gráficos** (Recharts): chuva (barras) + ETc/ETc_adj (linhas) com fundo por janela; Dr × RAW × TAW; Ks com referências 0,85/0,70. Tooltip com todos os campos do dia.
 - **Cenários**: janela, dose base e eficiência base (debounce 400 ms) → `GET /msa/decision` → A/B/C com racional; B indisponível mostra `bUnavailableReason`; "Registrar decisão X" abre justificativa obrigatória → `POST /msa/decisions` com `runId`. Lista de decisões abaixo. PRODUTOR vê sem botões.
 - **Histórico de runs**: tabela; "Ver série" troca a série dos gráficos/linha do tempo para uma run antiga (`?runId=`) com aviso e retorno.
 - **CSV** (`lib/msa/csv.ts`): `;`, vírgula decimal, BOM UTF-8; `serie-diaria-<talhao-safra>-<run>.csv` e `resumos-…csv`.
+
+## Administração (`/admin`)
+
+Filas (contagens, próximo semanal e próxima recalibração anual), ações `ingest-latest`, backfill regional e `process-all`, e a seção **Estações e correção de viés**: upload de CSV de observações (BDMEP ou genérico com metadados; `fetch` com `FormData` fora do `api()`, que envia JSON), tabelas de estações (`GET /admin/stations`) e calibrações (`GET /admin/qm/calibrations`), botões **Calibrar todas as células** e **Calibrar célula** (`POST /admin/qm/calibrate`). Todos os 202 entram em "Jobs desta sessão" com polling de estado.
 
 ## Infra
 

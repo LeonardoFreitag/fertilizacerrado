@@ -1,0 +1,31 @@
+{
+  "name": "fertilizacerrado",
+  "private": true,
+  "description": "Atalhos para operar a stack Docker do FertilizaCerrado",
+  "packageManager": "pnpm@9.15.4",
+  "engines": { "node": ">=20.0.0", "pnpm": ">=9.0.0" },
+  "scripts": {
+    "start": "docker compose up -d",
+    "stop": "docker compose down",
+    "restart": "docker compose down && docker compose up -d",
+    "status": "docker compose ps",
+    "logs": "docker compose logs -f",
+    "logs:api": "docker compose logs -f api",
+    "logs:worker": "docker compose logs -f worker",
+    "logs:etl": "docker compose logs -f etl",
+    "logs:frontend": "docker compose logs -f frontend",
+    "build": "docker compose build",
+    "rebuild": "docker compose build --no-cache && docker compose up -d",
+    "seed": "docker compose exec api pnpm prisma db seed",
+    "migrate": "docker compose exec api pnpm prisma migrate deploy",
+    "db:shell": "docker compose exec db sh -c 'psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"'",
+    "etl": "docker compose run --rm etl",
+    "etl:status": "docker compose run --rm etl status",
+    "test": "docker compose exec api pnpm test && docker compose exec frontend pnpm test",
+    "test:api": "docker compose exec api pnpm test",
+    "test:frontend": "docker compose exec frontend pnpm test",
+    "test:e2e": "docker compose exec frontend pnpm exec playwright test",
+    "verify-link": "docker compose logs api | grep -oE 'http://[^ ]*(verificar-email|redefinir-senha)[^ ]*' | tail -1",
+    "clean": "docker compose down -v"
+  }
+}

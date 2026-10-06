@@ -44,11 +44,13 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      STATION_IMPORTS_DIR: /data/station-imports
     ports:
       - "3000:3000"
     volumes:
       - ./backend/src:/app/src:ro
       - ./backend/prisma:/app/prisma:ro
+      - station_imports:/data/station-imports
     stop_grace_period: 15s
     depends_on:
       db:
@@ -67,9 +69,11 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      STATION_IMPORTS_DIR: /data/station-imports
     volumes:
       - ./backend/src:/app/src:ro
       - ./backend/prisma:/app/prisma:ro
+      - station_imports:/data/station-imports
     stop_grace_period: 15s
     depends_on:
       db:
@@ -119,11 +123,17 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      STATION_IMPORTS_DIR: /data/station-imports
       CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
       CDS_API_KEY: ${CDS_API_KEY:-}
       ETL_CACHE_DIR: /data/cache
+      QM_MAX_DISTANCE_KM: ${QM_MAX_DISTANCE_KM:-50}
+      QM_MIN_YEARS: ${QM_MIN_YEARS:-10}
+      QM_WET_DAY_MM: ${QM_WET_DAY_MM:-0.1}
+      QM_MAX_RATIO: ${QM_MAX_RATIO:-3}
     volumes:
       - etl_cache:/data/cache
+      - station_imports:/data/station-imports
     stop_grace_period: 30s
     depends_on:
       db:
@@ -145,3 +155,4 @@ volumes:
   etl_cache:
   frontend_node_modules:
   frontend_pnpm_store:
+  station_imports:

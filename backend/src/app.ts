@@ -8,6 +8,8 @@ import { env } from './config/env';
 import { authRoutes } from './modules/auth/auth.routes';
 import { cultivarRoutes } from './modules/cultivars/cultivar.routes';
 import { harvestRoutes } from './modules/harvests/harvest.routes';
+import { qmRoutes } from './modules/admin-qm/qm.routes';
+import { stationsRoutes } from './modules/admin-stations/stations.routes';
 import { jobsRoutes } from './modules/jobs/jobs.routes';
 import { propertyRoutes } from './modules/properties/property.routes';
 import { userRoutes } from './modules/users/user.routes';
@@ -40,6 +42,8 @@ app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/cultivars', cultivarRoutes);
 app.use('/api/v1/harvests', harvestRoutes);
 app.use('/api/v1/admin/jobs', jobsRoutes);
+app.use('/api/v1/admin/stations', stationsRoutes);
+app.use('/api/v1/admin/qm', qmRoutes);
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({ error: 'Not Found', code: 'NOT_FOUND', path: req.originalUrl });

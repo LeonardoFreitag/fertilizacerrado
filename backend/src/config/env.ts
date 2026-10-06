@@ -18,6 +18,8 @@ const envSchema = z
 
     DATABASE_URL: z.string().url(),
     REDIS_URL: z.string().url(),
+    /** Volume compartilhado com o ETL para os CSVs de observações (upload) */
+    STATION_IMPORTS_DIR: z.string().min(1).default('./station-imports'),
 
     JWT_SECRET: z.string().min(32, 'deve ter no mínimo 32 caracteres'),
     JWT_EXPIRES_IN: z.string().default('15m'),

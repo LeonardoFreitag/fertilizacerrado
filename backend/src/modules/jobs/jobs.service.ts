@@ -13,6 +13,7 @@ import {
   INGEST_JOB_OPTS,
   JOB_NAMES,
   PROCESS_JOB_OPTS,
+  ANNUAL_SCHEDULER_ID,
   WEEKLY_SCHEDULER_ID,
   buildBackfillFlow,
   jobIds,
@@ -24,6 +25,12 @@ import {
 export interface EnqueuedJob {
   jobId: string;
   queue: QueueName;
+}
+
+export interface SchedulerView {
+  nextRun: string | null;
+  pattern: string | null;
+  tz: string | null;
 }
 
 export interface JobView {
@@ -71,7 +78,9 @@ export const jobsService = {
   },
 
   async enqueueIngest(data: IngestJobData, jobId?: string): Promise<EnqueuedJob> {
-    const job = await getQueue(QUEUES.ingest).add(JOB_NAMES.ingest, data, { ...INGEST_JOB_OPTS, jobId: jobId ?? randomUUID() });
+    // Importação de observações e QM não dependem do CDS: a falha é definitiva, sem retentativas.
+    const opts = data.kind === 'latest' || data.kind === 'range' || data.kind === 'cell' ? INGEST_JOB_OPTS : { ...INGEST_JOB_OPTS, attempts: 1 };
+    const job = await getQueue(QUEUES.ingest).add(JOB_NAMES.ingest, data, { ...opts, jobId: jobId ?? randomUUID() });
     return { jobId: String(job.id), queue: QUEUES.ingest };
   },
 
@@ -118,21 +127,17 @@ export const jobsService = {
     return jobs.map((j) => ({ jobId: String(j.id), queue: QUEUES.process }));
   },
 
-  async queueCounts(): Promise<{ queues: Record<string, Record<string, number>>; weekly: { nextRun: string | null; pattern: string | null; tz: string | null } }> {
+  async queueCounts(): Promise<{ queues: Record<string, Record<string, number>>; weekly: SchedulerView; annual: SchedulerView }> {
     const queues: Record<string, Record<string, number>> = {};
     for (const name of QUEUE_NAMES) {
       queues[name] = await getQueue(name).getJobCounts(...COUNT_STATES);
     }
     const schedulers = await getQueue(QUEUES.weekly).getJobSchedulers();
-    const weekly = schedulers.find((s) => s.key === WEEKLY_SCHEDULER_ID || s.id === WEEKLY_SCHEDULER_ID);
-    return {
-      queues,
-      weekly: {
-        nextRun: weekly?.next ? new Date(weekly.next).toISOString() : null,
-        pattern: weekly?.pattern ?? null,
-        tz: weekly?.tz ?? null,
-      },
+    const view = (id: string): SchedulerView => {
+      const s = schedulers.find((x) => x.key === id || x.id === id);
+      return { nextRun: s?.next ? new Date(s.next).toISOString() : null, pattern: s?.pattern ?? null, tz: s?.tz ?? null };
     };
+    return { queues, weekly: view(WEEKLY_SCHEDULER_ID), annual: view(ANNUAL_SCHEDULER_ID) };
   },
 
   async getJob(queue: QueueName, id: string): Promise<JobView | null> {

@@ -5,6 +5,7 @@
  */
 import { randomInt } from 'node:crypto';
 import type { MsaDecision, MsaRun, MsaRunReason, MsaScenario } from '@prisma/client';
+import { qmRepository, type QmCalibrationSummary } from '../admin-qm/qm.repository';
 import { AppError } from '../../utils/app-error';
 import { CULTIVAR_PARAM_KEYS } from '../cultivars/dtos/cultivar-params.schema';
 import { harvestService } from '../harvests/harvest.service';
@@ -95,6 +96,9 @@ export interface RunView {
   missingDates: unknown;
   error: string | null;
   triggeredById: string | null;
+  /** Calibração QM ativa da célula no momento do processamento (reprodutibilidade) */
+  qmCalibrationId: string | null;
+  qmCalibration: QmCalibrationSummary | null;
 }
 
 export interface ProcessResult {
@@ -137,7 +141,20 @@ export function toRunView(run: MsaRun): RunView {
     missingDates: run.missingDates,
     error: run.error,
     triggeredById: run.triggeredById,
+    qmCalibrationId: run.qmCalibrationId,
+    qmCalibration: null, // preenchido por withCalibration()
   };
+}
+
+async function runView(run: MsaRun): Promise<RunView> {
+  return (await withCalibration([toRunView(run)]))[0]!;
+}
+
+/** Anexa o resumo da calibração (estação, anos, distância) às views. */
+async function withCalibration<T extends { qmCalibrationId: string | null; qmCalibration: QmCalibrationSummary | null }>(views: T[]): Promise<T[]> {
+  const ids = [...new Set(views.map((v) => v.qmCalibrationId).filter((id): id is string => !!id))];
+  const summaries = new Map(await Promise.all(ids.map(async (id) => [id, await qmRepository.summaryById(id)] as const)));
+  return views.map((v) => ({ ...v, qmCalibration: v.qmCalibrationId ? (summaries.get(v.qmCalibrationId) ?? null) : null }));
 }
 
 const pct = (p10: number | null, p50: number | null, p90: number | null) =>
@@ -264,16 +281,19 @@ async function runProcessing(harvest: HarvestForProcessing, options: ProcessOpti
       throw new AppError(422, 'FIELD_WITHOUT_ERA5_CELL', `O talhão "${harvest.field.name}" não tem célula ERA5-Land.`);
     }
     const interval = resolveInterval(from, limit, series, cultivar);
+    const cell = await era5Repository.getCell(harvest.field.id);
+    const calibration = cell ? await qmRepository.activeForCell(cell.cellLat, cell.cellLon) : null;
     const startedAt = new Date();
     const base = {
       harvestId, startedAt, dateFrom: toDate(interval.from), dateTo: toDate(interval.to),
       cultivarSnapshot: cultivar as object, soilSnapshot: soil as object, engineVersion: ENGINE_VERSION,
       triggeredById, reason: options.reason ?? 'MANUAL', jobId: options.jobId ?? null,
+      qmCalibrationId: calibration?.id ?? null,
     };
 
     if (interval.missingDates.length > 0) {
       const run = await msaRepository.createRun({ ...base, status: 'NEEDS_DATA', finishedAt: new Date(), missingDates: interval.missingDates });
-      return { run: toRunView(run), phases: null, currentPhase: null };
+      return { run: await runView(run), phases: null, currentPhase: null };
     }
 
     const seed = options.seed ?? randomInt(0, MAX_SEED + 1);
@@ -287,7 +307,7 @@ async function runProcessing(harvest: HarvestForProcessing, options: ProcessOpti
         summaryRows(result),
       );
       const last = result.baselineSeries[result.baselineSeries.length - 1];
-      return { run: toRunView(run), phases: run.phaseSummaries.map(toPhaseView), currentPhase: last?.phase ?? null };
+      return { run: await runView(run), phases: run.phaseSummaries.map(toPhaseView), currentPhase: last?.phase ?? null };
     } catch (error) {
       const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       const failed = await msaRepository.createRun({ ...base, status: 'FAILED', finishedAt: new Date(), seed, iterations: ITERATIONS, error: message });
@@ -315,7 +335,7 @@ export const msaService = {
     if (!run) throw noResult();
     const daily = await msaRepository.dailyResults(run.id);
     const last = daily[daily.length - 1];
-    return { run: toRunView(run), phases: run.phaseSummaries.map(toPhaseView), currentPhase: (last?.phase as Phase) ?? null };
+    return { run: await runView(run), phases: run.phaseSummaries.map(toPhaseView), currentPhase: (last?.phase as Phase) ?? null };
   },
 
   async getDaily(user: AuthUser, harvestId: string, runId?: string) {
@@ -328,7 +348,7 @@ export const msaService = {
 
   async listRuns(user: AuthUser, harvestId: string): Promise<RunView[]> {
     await accessibleHarvest(user, harvestId);
-    return (await msaRepository.listRuns(harvestId)).map(toRunView);
+    return withCalibration((await msaRepository.listRuns(harvestId)).map(toRunView));
   },
 
   /** Cenários sobre uma run (padrão: a última SUCCEEDED); nada é persistido. */

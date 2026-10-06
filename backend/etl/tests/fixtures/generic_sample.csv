@@ -1,0 +1,5 @@
+station_code,date,precip_mm,tmax,tmin
+SYN-GYN,2020-01-01,12.4,31.2,20.1
+SYN-GYN,2020-01-02,0,,
+SYN-GYN,02/01/2020,0.5,30,19
+SYN-GYN,,3,30,19

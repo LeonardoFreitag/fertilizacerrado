@@ -96,9 +96,16 @@ export interface FieldPayload {
   thetaWP?: number;
 }
 
+export interface SchedulerView {
+  nextRun: string | null;
+  pattern: string | null;
+  tz: string | null;
+}
+
 export interface QueueCounts {
   queues: Record<string, Record<string, number>>;
-  weekly: { nextRun: string | null; pattern: string | null; tz: string | null };
+  weekly: SchedulerView;
+  annual: SchedulerView;
 }
 
 // --- cultivares, safras e MSA --------------------------------------------------
@@ -211,6 +218,40 @@ export interface RunView {
   missingDates: string[] | null;
   error: string | null;
   triggeredById: string | null;
+  qmCalibrationId: string | null;
+  qmCalibration: QmCalibrationSummary | null;
+}
+
+export interface QmCalibrationSummary {
+  id: string;
+  stationCode: string;
+  stationName: string;
+  years: number;
+  distanceKm: number;
+  periodFrom: string;
+  periodTo: string;
+  method: string;
+}
+
+export interface QmCalibrationView extends QmCalibrationSummary {
+  cellLat: number;
+  cellLon: number;
+  variable: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface WeatherStation {
+  code: string;
+  name: string;
+  source: 'INMET' | 'ANA' | 'OUTRA';
+  lat: number;
+  lon: number;
+  altitudeM: number | null;
+  active: boolean;
+  obsCount: number;
+  obsFrom: string | null;
+  obsTo: string | null;
 }
 
 export interface MsaLatest {

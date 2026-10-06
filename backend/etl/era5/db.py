@@ -15,8 +15,8 @@ BBox = tuple[float, float, float, float]  # (N, W, S, E)
 UPSERT_SQL = """
 INSERT INTO era5_daily_data
   (time, cell_lat, cell_lon, t2m_max, t2m_min, t2m_mean, d2m_mean, u2, rn,
-   tp_raw, tp_corrected, qm_applied, source, ingested_at)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+   tp_raw, tp_corrected, qm_applied, qm_calibration_id, source, ingested_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
 ON CONFLICT (time, cell_lat, cell_lon) DO UPDATE SET
   t2m_max = EXCLUDED.t2m_max,
   t2m_min = EXCLUDED.t2m_min,
@@ -27,6 +27,7 @@ ON CONFLICT (time, cell_lat, cell_lon) DO UPDATE SET
   tp_raw = EXCLUDED.tp_raw,
   tp_corrected = EXCLUDED.tp_corrected,
   qm_applied = EXCLUDED.qm_applied,
+  qm_calibration_id = EXCLUDED.qm_calibration_id,
   source = EXCLUDED.source,
   ingested_at = now()
 """
@@ -182,3 +183,153 @@ def count_rows(conn: psycopg.Connection, cell: Cell, date_from: date, date_to: d
         (cell[0], cell[1], date_from, date_to),
     ).fetchone()
     return int(row["n"])
+
+
+# --- estações e observações ----------------------------------------------------
+
+
+def upsert_station(conn: psycopg.Connection, meta) -> None:
+    conn.execute(
+        """
+        INSERT INTO weather_stations (code, name, source, lat, lon, altitude_m, geometry, active, created_at, updated_at)
+        VALUES (%(code)s, %(name)s, %(source)s::station_source, %(lat)s, %(lon)s, %(alt)s,
+                ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)::geography, true, now(), now())
+        ON CONFLICT (code) DO UPDATE SET
+          name = EXCLUDED.name, source = EXCLUDED.source, lat = EXCLUDED.lat, lon = EXCLUDED.lon,
+          altitude_m = COALESCE(EXCLUDED.altitude_m, weather_stations.altitude_m),
+          geometry = EXCLUDED.geometry, updated_at = now()
+        """,
+        {"code": meta.code, "name": meta.name, "source": meta.source, "lat": meta.lat, "lon": meta.lon, "alt": meta.altitude_m},
+    )
+    conn.commit()
+
+
+def station_exists(conn: psycopg.Connection, code: str) -> bool:
+    return conn.execute("SELECT 1 FROM weather_stations WHERE code = %s", (code,)).fetchone() is not None
+
+
+def upsert_obs(conn: psycopg.Connection, rows: Iterable[Sequence], source_file: str) -> int:
+    rows = [tuple(r) + (source_file,) for r in rows]
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO station_daily_obs (station_code, date, precip_mm, tmax, tmin, source_file, imported_at)
+            VALUES (%s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (station_code, date) DO UPDATE SET
+              precip_mm = EXCLUDED.precip_mm, tmax = EXCLUDED.tmax, tmin = EXCLUDED.tmin,
+              source_file = EXCLUDED.source_file, imported_at = now()
+            """,
+            rows,
+        )
+    conn.commit()
+    return len(rows)
+
+
+def list_stations(conn: psycopg.Connection, active_only: bool = False) -> list[dict]:
+    return conn.execute(
+        """
+        SELECT s.code, s.name, s.source, s.lat, s.lon, s.altitude_m, s.active,
+               count(o.date) AS obs_count, min(o.date) AS obs_from, max(o.date) AS obs_to
+        FROM weather_stations s
+        LEFT JOIN station_daily_obs o ON o.station_code = s.code
+        WHERE (%s = false OR s.active)
+        GROUP BY s.code ORDER BY s.code
+        """,
+        (active_only,),
+    ).fetchall()
+
+
+def station_obs_series(conn: psycopg.Connection, code: str, date_from: date | None = None, date_to: date | None = None) -> dict[date, float | None]:
+    rows = conn.execute(
+        """
+        SELECT date, precip_mm FROM station_daily_obs
+        WHERE station_code = %s AND (%s::date IS NULL OR date >= %s) AND (%s::date IS NULL OR date <= %s)
+        ORDER BY date
+        """,
+        (code, date_from, date_from, date_to, date_to),
+    ).fetchall()
+    return {r["date"]: (None if r["precip_mm"] is None else float(r["precip_mm"])) for r in rows}
+
+
+def cell_raw_series(conn: psycopg.Connection, cell: Cell, date_from: date | None = None, date_to: date | None = None) -> dict[date, float]:
+    rows = conn.execute(
+        """
+        SELECT time, tp_raw FROM era5_daily_data
+        WHERE cell_lat = %s AND cell_lon = %s
+          AND (%s::date IS NULL OR time >= %s) AND (%s::date IS NULL OR time <= %s)
+        ORDER BY time
+        """,
+        (cell[0], cell[1], date_from, date_from, date_to, date_to),
+    ).fetchall()
+    return {r["time"]: float(r["tp_raw"]) for r in rows}
+
+
+# --- calibrações QM ---------------------------------------------------------------
+
+
+def save_calibration(conn: psycopg.Connection, cell: Cell, station_code: str, calibration, distance_km: float, variable: str = "tp") -> str:
+    """Desativa a calibração ativa da célula/variável e grava a nova como ativa."""
+    import json
+
+    j = calibration.to_json()
+    with conn.transaction():
+        conn.execute(
+            "UPDATE qm_calibrations SET active = false WHERE cell_lat = %s AND cell_lon = %s AND variable = %s AND active",
+            (cell[0], cell[1], variable),
+        )
+        row = conn.execute(
+            """
+            INSERT INTO qm_calibrations (id, cell_lat, cell_lon, station_code, variable, method, period_from, period_to,
+              n_days_by_month, wet_day_threshold_obs, wet_thresholds_era5, quantiles, max_ratio, distance_km, active, created_at)
+            VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s, %s, true, now())
+            RETURNING id
+            """,
+            (
+                cell[0], cell[1], station_code, variable, calibration.method, calibration.period_from, calibration.period_to,
+                json.dumps(j["n_days_by_month"]), calibration.wet_day_mm, json.dumps(j["wet_thresholds_era5"]),
+                json.dumps(j["quantiles"]), calibration.max_ratio, distance_km,
+            ),
+        ).fetchone()
+    return str(row["id"])
+
+
+def active_calibration(conn: psycopg.Connection, cell: Cell, variable: str = "tp") -> dict | None:
+    return conn.execute(
+        """
+        SELECT c.*, s.name AS station_name FROM qm_calibrations c
+        JOIN weather_stations s ON s.code = c.station_code
+        WHERE c.cell_lat = %s AND c.cell_lon = %s AND c.variable = %s AND c.active
+        """,
+        (cell[0], cell[1], variable),
+    ).fetchone()
+
+
+def list_calibrations(conn: psycopg.Connection) -> list[dict]:
+    return conn.execute(
+        """
+        SELECT c.id, c.cell_lat, c.cell_lon, c.station_code, s.name AS station_name, c.variable, c.method,
+               c.period_from, c.period_to, c.distance_km, c.active, c.created_at
+        FROM qm_calibrations c JOIN weather_stations s ON s.code = c.station_code
+        ORDER BY c.cell_lat, c.cell_lon, c.active DESC, c.created_at DESC
+        """
+    ).fetchall()
+
+
+def active_stations(conn: psycopg.Connection) -> list[dict]:
+    return conn.execute("SELECT code, name, lat, lon FROM weather_stations WHERE active ORDER BY code").fetchall()
+
+
+def update_corrected(conn: psycopg.Connection, cell: Cell, rows: Iterable[tuple], calibration_id: str | None) -> int:
+    """``rows``: (time, tp_corrected). Com ``calibration_id`` nulo, marca sem correção."""
+    rows = [(float(v), calibration_id is not None, calibration_id, cell[0], cell[1], t) for t, v in rows]
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(
+            "UPDATE era5_daily_data SET tp_corrected = %s, qm_applied = %s, qm_calibration_id = %s WHERE cell_lat = %s AND cell_lon = %s AND time = %s",
+            rows,
+        )
+    conn.commit()
+    return len(rows)

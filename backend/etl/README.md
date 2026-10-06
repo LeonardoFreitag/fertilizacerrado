@@ -4,6 +4,8 @@ Serviço Python 3.12 que baixa dados horários do ERA5-Land no Copernicus CDS, a
 
 O serviço `etl` dos dois Compose roda como **worker de longa duração** (`python -m era5.cli worker`): consome a fila BullMQ `era5-ingest` (concorrência 1) alimentada pelo backend — ingest semanal, backfill de safra nova, backfill regional (`/api/v1/admin/jobs`). Cada job vira uma run em `era5_ingestion_runs` com `job_id`; o progresso por período vai para o BullMQ e `updated_at` é o heartbeat. Na subida, runs `RUNNING` há mais de 6 h sem heartbeat são marcadas `FAILED` (`orphaned`). `SIGTERM` conclui o job em curso antes de sair.
 
+O mesmo worker consome os jobs de **observações e correção de viés** (`station-import`, `qm-calibrate`, `qm-apply`), disparados pelo upload em `/admin` e pela calibração anual (1º de janeiro).
+
 O CLI continua disponível para operação manual, em um contêiner descartável:
 
 ```bash
@@ -11,7 +13,18 @@ docker compose run --rm etl status
 docker compose run --rm etl ingest --latest                       # [hoje−16, hoje−6], todas as células
 docker compose run --rm etl ingest --from 2025-11-01 --to 2025-11-30
 docker compose run --rm etl backfill --harvest <uuid-da-safra>    # só a célula do talhão, da emergência a hoje−6
+docker compose run --rm etl stations list
+docker compose run --rm etl stations import /data/station-imports/83423.csv --format bdmep
+docker compose run --rm etl qm calibrate --auto                   # todas as células, estação mais próxima elegível
+docker compose run --rm etl qm calibrate --cell -16.7 -49.3 --station 83423
+docker compose run --rm etl qm apply --all
+docker compose run --rm etl qm status
+docker compose run --rm etl qm validate --cell -16.7 -49.3 --station 83423 --calib-years 2010-2019 --test-years 2020-2024 --csv /data/cache/qm.csv
 ```
+
+## Observações de estações (BDMEP/INMET)
+
+O BDMEP (<https://bdmep.inmet.gov.br>) exige login; o download não é automatizado. Para obter o arquivo: entrar, escolher **Dados diários**, a estação (ex.: 83423 Goiânia, convencional) e o período, marcar ao menos *Precipitação total diária* e baixar o CSV. O arquivo tem um cabeçalho de metadados (`Nome:`, `Codigo Estacao:`, `Latitude:`, `Longitude:`, `Altitude:`), separador `;` e vírgula decimal — o importador lê tudo isso (`--format bdmep`). Alternativa: um CSV genérico `station_code,date,precip_mm[,tmax,tmin]` (`--format generic`), informando a estação com `--station-meta "codigo;nome;FONTE;lat;lon[;alt]"` se ela ainda não existir. Pela interface: `/admin` → "Importar observações diárias" (o arquivo vai para o volume `station_imports` e um job o importa).
 
 Em produção, `docker compose -f docker-compose.prod.yml run --rm etl …` com a imagem `${ECR_REGISTRY}/${ECR_REPOSITORY_ETL}`.
 
@@ -32,6 +45,8 @@ A fila do CDS leva de minutos a horas conforme a carga do serviço. Intervalos d
 | `CDS_API_KEY` | token pessoal; exigida por `ingest`, `backfill` e `worker` |
 | `ETL_CACHE_DIR` | `/data/cache` no contêiner (volume `etl_cache`) |
 | `REDIS_URL` | montada pelo Compose; exigida só pelo `worker` (fila `era5-ingest`) |
+| `STATION_IMPORTS_DIR` | `/data/station-imports` (volume `station_imports`, compartilhado com a API para os uploads) |
+| `QM_MAX_DISTANCE_KM`, `QM_MIN_YEARS`, `QM_WET_DAY_MM`, `QM_MAX_RATIO` | defaults 50, 10, 0,1, 3 — correção de viés; gravadas em cada calibração (`docs/msa/questoes-abertas.md` item 6) |
 
 ## Pipeline
 
@@ -42,8 +57,12 @@ era5/
 ├── download.py   bbox das células (+0,1°), requisições NetCDF por mês ou trimestre, cache
 ├── transform.py  horário → diário com as convenções do ERA5-Land
 ├── load.py       célula mais próxima → upsert idempotente
-├── worker.py     worker BullMQ da fila era5-ingest (kind latest | range | cell), heartbeat, órfãs
-└── cli.py        ingest | backfill | status | worker
+├── stations.py   importação de observações (BDMEP/INMET e genérico)
+├── qm.py         Quantile Mapping mensal em duas etapas (funções puras) + pareamento + métricas
+├── qm_ops.py     calibração/aplicação sobre o banco, validação (Caso 4)
+├── synthetic.py  séries sintéticas determinísticas (testes e e2e)
+├── worker.py     worker BullMQ da fila era5-ingest (latest | range | cell | station-import | qm-calibrate | qm-apply)
+└── cli.py        ingest | backfill | status | worker | stations | qm
 ```
 
 Convenções que importam (detalhes em `docs/msa/era5-etl.md`): `tp`, `ssr` e `str` são acumulados desde 00 UTC — o total do dia D é o passo 00 UTC de D+1, nunca a soma das horas; temperaturas K → °C; vento pela velocidade horária `√(u²+v²)`, média diária, × 0,748 para 2 m; `rn = (ssr + str)/1e6` MJ/m²/dia; dia em UTC. Ainda sem correção de viés: `tp_corrected = tp_raw`, `qm_applied = false`.

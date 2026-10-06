@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
-from . import db, download, load, transform
+from . import db, download, load, qm_ops, stations, transform
 from .config import ConfigError, Settings
 
 log = logging.getLogger("era5")
@@ -54,6 +54,32 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--limit", type=int, default=10)
 
     sub.add_parser("worker", help="consome a fila BullMQ era5-ingest até receber SIGTERM")
+
+    st = sub.add_parser("stations", help="estações meteorológicas e observações").add_subparsers(dest="stations_cmd", required=True)
+    st_import = st.add_parser("import", help="importa CSV de observações diárias")
+    st_import.add_argument("path")
+    st_import.add_argument("--format", choices=stations.FORMATS, required=True)
+    st_import.add_argument("--station-meta", help="genérico: 'codigo;nome;FONTE;lat;lon[;alt]' (ou sem código se o CSV tiver uma só estação)")
+    st.add_parser("list", help="lista estações e cobertura")
+
+    q = sub.add_parser("qm", help="correção de viés (Quantile Mapping)").add_subparsers(dest="qm_cmd", required=True)
+    q_cal = q.add_parser("calibrate", help="calibra uma célula (ou todas) contra a estação mais próxima elegível")
+    q_cal.add_argument("--cell", nargs=2, type=float, metavar=("LAT", "LON"))
+    q_cal.add_argument("--station", help="código da estação (opcional; padrão: a mais próxima elegível)")
+    q_cal.add_argument("--auto", action="store_true", help="todas as células de era5_cells")
+    q_cal.add_argument("--from", dest="date_from", type=parse_date)
+    q_cal.add_argument("--to", dest="date_to", type=parse_date)
+    q_cal.add_argument("--no-apply", action="store_true")
+    q_apply = q.add_parser("apply", help="reaplica a calibração ativa às linhas existentes")
+    q_apply.add_argument("--cell", nargs=2, type=float, metavar=("LAT", "LON"))
+    q_apply.add_argument("--all", action="store_true")
+    q.add_parser("status", help="calibrações por célula")
+    q_val = q.add_parser("validate", help="Caso 4: calibra em A, avalia em B")
+    q_val.add_argument("--cell", nargs=2, type=float, metavar=("LAT", "LON"), required=True)
+    q_val.add_argument("--station", required=True)
+    q_val.add_argument("--calib-years", required=True, help="ex.: 2010-2019")
+    q_val.add_argument("--test-years", required=True, help="ex.: 2020-2024")
+    q_val.add_argument("--csv", help="arquivo de saída")
     return parser
 
 
@@ -152,6 +178,107 @@ def cmd_backfill(args, settings: Settings, conn, command: str) -> int:
     return 0
 
 
+def cmd_stations(args, settings: Settings, conn) -> int:
+    if args.stations_cmd == "list":
+        rows = db.list_stations(conn)
+        if not rows:
+            print("nenhuma estação cadastrada")
+            return 0
+        print(f"{'código':10} {'nome':28} {'fonte':6} {'lat':>8} {'lon':>8} {'obs':>6}  período")
+        for r in rows:
+            per = f"{r['obs_from']} → {r['obs_to']}" if r["obs_from"] else "-"
+            print(f"{r['code']:10} {r['name'][:28]:28} {r['source']:6} {r['lat']:8.3f} {r['lon']:8.3f} {r['obs_count']:6}  {per}{'' if r['active'] else '  (inativa)'}")
+        return 0
+    meta = None
+    if args.station_meta:
+        parsed = stations.parse_file(args.path, args.format)
+        meta = stations.StationMeta.parse_auto(args.station_meta, sorted({o.station_code for o in parsed.observations}))
+    run_id = db.open_run(conn, f"era5 stations import {args.path} --format {args.format}", None, None)
+    try:
+        summary = stations.import_file(conn, args.path, args.format, meta)
+        note = "; ".join(summary.warnings + ([f"linhas inválidas: {summary.invalid_rows}"] if summary.invalid_rows else [])) or None
+        db.close_run(conn, run_id, status="SUCCEEDED", cells_requested=len(summary.stations), rows_upserted=summary.rows, error=note)
+        log.info("importadas %d observação(ões) de %s%s", summary.rows, ", ".join(summary.stations), f" ({note})" if note else "")
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        db.close_run(conn, run_id, status="FAILED", error=f"{type(exc).__name__}: {exc}")
+        raise
+
+
+def _print_calibrate(results) -> None:
+    for r in results:
+        if r.calibration_id:
+            print(f"célula {r.cell}: calibrada com {r.station_code} ({r.distance_km:.1f} km, {r.years:.1f} anos) — {r.calibration_id} — {r.rows_applied} linha(s) corrigida(s)")
+        else:
+            print(f"célula {r.cell}: SEM calibração — {'; '.join(r.warnings)}")
+        for w in (r.warnings if r.calibration_id else []):
+            print(f"  aviso: {w}")
+
+
+def cmd_qm(args, settings: Settings, conn) -> int:
+    if args.qm_cmd == "calibrate":
+        if not args.auto and not args.cell:
+            raise ConfigError("informe --cell LAT LON ou --auto")
+        command = "era5 qm calibrate " + ("--auto" if args.auto else f"--cell {args.cell[0]} {args.cell[1]}" + (f" --station {args.station}" if args.station else ""))
+        run_id = db.open_run(conn, command, args.date_from, args.date_to)
+        try:
+            if args.auto:
+                results = qm_ops.calibrate_auto(conn, settings, args.date_from, args.date_to)
+            else:
+                results = [qm_ops.calibrate_cell(conn, settings, (args.cell[0], args.cell[1]), args.station, args.date_from, args.date_to, do_apply=not args.no_apply)]
+            _print_calibrate(results)
+            ok = [r for r in results if r.calibration_id]
+            note = None if len(ok) == len(results) else f"células sem estação elegível: {len(results) - len(ok)}"
+            db.close_run(conn, run_id, status="SUCCEEDED", cells_requested=len(results), rows_upserted=sum(r.rows_applied for r in results), error=note)
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            db.close_run(conn, run_id, status="FAILED", error=f"{type(exc).__name__}: {exc}")
+            raise
+    if args.qm_cmd == "apply":
+        if not args.all and not args.cell:
+            raise ConfigError("informe --cell LAT LON ou --all")
+        run_id = db.open_run(conn, "era5 qm apply " + ("--all" if args.all else f"--cell {args.cell[0]} {args.cell[1]}"), None, None)
+        try:
+            if args.all:
+                out = qm_ops.apply_all(conn)
+                for cell, n in out.items():
+                    print(f"célula {cell}: {n} linha(s)")
+                total, cells = sum(out.values()), len(out)
+            else:
+                total, cells = qm_ops.apply_cell(conn, (args.cell[0], args.cell[1])), 1
+                print(f"{total} linha(s)")
+            db.close_run(conn, run_id, status="SUCCEEDED", cells_requested=cells, rows_upserted=total)
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            db.close_run(conn, run_id, status="FAILED", error=f"{type(exc).__name__}: {exc}")
+            raise
+    if args.qm_cmd == "status":
+        rows = db.list_calibrations(conn)
+        if not rows:
+            print("nenhuma calibração")
+            return 0
+        print(f"{'célula':16} {'estação':10} {'período':23} {'km':>6} {'ativa':5}  id")
+        for r in rows:
+            print(f"{str(r['cell_lat'])+','+str(r['cell_lon']):16} {r['station_code']:10} {str(r['period_from'])+' → '+str(r['period_to']):23} {r['distance_km']:6.1f} {'sim' if r['active'] else 'não':5}  {r['id']}")
+        return 0
+    if args.qm_cmd == "validate":
+        rows = qm_ops.validate(conn, settings, (args.cell[0], args.cell[1]), args.station, args.calib_years, args.test_years)
+        print(f"{'mês':5} {'dias':>5} {'RMSE bruto':>10} {'RMSE corr':>10} {'PBIAS bruto':>11} {'PBIAS corr':>10} {'f_obs':>6} {'f_bruto':>7} {'f_corr':>6}")
+        for r in rows:
+            print(f"{r.label:5} {r.n_days:5} {r.rmse_raw:10.2f} {r.rmse_corr:10.2f} {r.pbias_raw:10.1f}% {r.pbias_corr:9.1f}% {r.wet_obs:6.3f} {r.wet_raw:7.3f} {r.wet_corr:6.3f}")
+        if args.csv:
+            import csv
+
+            with open(args.csv, "w", newline="") as fh:
+                w = csv.writer(fh)
+                w.writerow(["mes", "dias", "rmse_bruto", "rmse_corrigido", "pbias_bruto", "pbias_corrigido", "frac_chuva_obs", "frac_chuva_bruto", "frac_chuva_corrigido"])
+                for r in rows:
+                    w.writerow([r.label, r.n_days, f"{r.rmse_raw:.3f}", f"{r.rmse_corr:.3f}", f"{r.pbias_raw:.2f}", f"{r.pbias_corr:.2f}", f"{r.wet_obs:.4f}", f"{r.wet_raw:.4f}", f"{r.wet_corr:.4f}"])
+            print(f"CSV salvo em {args.csv}")
+        return 0
+    raise ConfigError(f"comando desconhecido: qm {args.qm_cmd}")
+
+
 def cmd_status(args, conn) -> int:
     runs = db.recent_runs(conn, args.limit)
     if not runs:
@@ -187,6 +314,10 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_ingest(args, settings, conn, command)
             if args.command == "backfill":
                 return cmd_backfill(args, settings, conn, command)
+            if args.command == "stations":
+                return cmd_stations(args, settings, conn)
+            if args.command == "qm":
+                return cmd_qm(args, settings, conn)
             raise ConfigError(f"comando desconhecido: {args.command}")
     except ConfigError as exc:
         log.error("%s", exc)

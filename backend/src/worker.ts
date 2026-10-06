@@ -9,6 +9,9 @@ import { prisma } from './config/database';
 import { closeQueues, getFlowProducer, getQueue, queueConnectionOptions, QUEUES } from './config/queue';
 import { closeRedis } from './config/redis';
 import {
+  ANNUAL_CRON,
+  ANNUAL_SCHEDULER_ID,
+  INGEST_JOB_OPTS,
   JOB_NAMES,
   PROCESS_JOB_OPTS,
   WEEKLY_CRON,
@@ -17,6 +20,7 @@ import {
   buildWeeklyFlow,
   jobIds,
   todayInTz,
+  type IngestJobData,
   type ProcessJobData,
 } from './modules/jobs/flows';
 import { msaService } from './modules/msa/msa.service';
@@ -66,6 +70,15 @@ const weeklyWorker = new Worker(
       log(`msa-weekly run ${date}: ${jobs.length} safra(s) ativa(s) enfileirada(s)`);
       return { date, enqueued: jobs.length };
     }
+    if (job.name === JOB_NAMES.annualTrigger) {
+      // Recalibração anual do QM (todas as células) + reaplicação; o ETL faz as duas etapas.
+      const enqueued = await getQueue(QUEUES.ingest).add(JOB_NAMES.ingest, { kind: 'qm-calibrate', auto: true } satisfies IngestJobData, {
+        ...INGEST_JOB_OPTS,
+        jobId: `qm-calibrate-auto_${todayInTz()}`,
+      });
+      log(`qm-annual: calibração automática enfileirada (job ${enqueued.id})`);
+      return { ingestJobId: enqueued.id };
+    }
     throw new Error(`job desconhecido na fila msa-weekly: ${job.name}`);
   },
   { connection, concurrency: 1 },
@@ -84,6 +97,12 @@ async function registerWeeklyScheduler(): Promise<void> {
     { name: JOB_NAMES.weeklyTrigger, data: {}, opts: PROCESS_JOB_OPTS },
   );
   log(`agendador semanal registrado: "${WEEKLY_CRON}" ${WEEKLY_TZ}`);
+  await getQueue(QUEUES.weekly).upsertJobScheduler(
+    ANNUAL_SCHEDULER_ID,
+    { pattern: ANNUAL_CRON, tz: WEEKLY_TZ },
+    { name: JOB_NAMES.annualTrigger, data: {}, opts: PROCESS_JOB_OPTS },
+  );
+  log(`agendador anual do QM registrado: "${ANNUAL_CRON}" ${WEEKLY_TZ}`);
 }
 
 let shuttingDown = false;

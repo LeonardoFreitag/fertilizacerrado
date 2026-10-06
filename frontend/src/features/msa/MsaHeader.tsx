@@ -77,6 +77,15 @@ export function MsaHeader({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={STATUS_TONE[run.status]}>{run.status}</Badge>
+          <span
+            data-testid="rain-badge"
+            title={run.qmCalibration ? `Quantile Mapping ${run.qmCalibration.method}, período ${run.qmCalibration.periodFrom} – ${run.qmCalibration.periodTo}` : 'Precipitação do ERA5-Land sem correção de viés'}
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${run.qmCalibration ? 'bg-sky-100 text-sky-900' : 'bg-slate-100 text-slate-600'}`}
+          >
+            {run.qmCalibration
+              ? `Chuva corrigida — estação ${run.qmCalibration.stationName} (${run.qmCalibration.stationCode}, ${formatNumber(run.qmCalibration.years, 1)} anos, ${formatNumber(run.qmCalibration.distanceKm, 1)} km)`
+              : 'Chuva sem correção (ERA5-Land bruto)'}
+          </span>
           <Button variant="secondary" size="sm" onClick={() => series && exportDaily(harvest, run.id, series)} disabled={!series}>
             Exportar série diária
           </Button>

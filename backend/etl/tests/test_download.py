@@ -135,18 +135,25 @@ def test_fetch_range_reports_progress(tmp_path):
 
 
 def test_open_month_cache_is_refreshed_daily(tmp_path):
-    """Mês ainda não consolidado: arquivo de dias anteriores é baixado de novo."""
+    """Mês ainda não consolidado: arquivo de dias anteriores é baixado de novo.
+    Usa a data real: a regra compara o mtime do arquivo com o dia de hoje."""
     import os
     import time
+    from datetime import datetime, timezone
 
+    today = datetime.now(timezone.utc).date()
+    open_month = (today.year, today.month)  # nunca consolidado (último dia + lag > hoje)
+    y, m = today.year, today.month - 4  # mês fechado com folga
+    if m <= 0:
+        y, m = y - 1, m + 12
     client = FakeClient()
-    target = download.fetch_month(client, BBOX, 2026, 9, tmp_path, TODAY)
+    target = download.fetch_month(client, BBOX, *open_month, tmp_path, today)
     yesterday = time.time() - 86400
     os.utime(target, (yesterday, yesterday))
-    download.fetch_month(client, BBOX, 2026, 9, tmp_path, TODAY)
+    download.fetch_month(client, BBOX, *open_month, tmp_path, today)
     assert client.calls == 2
     # mês consolidado: o arquivo antigo continua valendo
-    old = download.fetch_month(client, BBOX, 2026, 8, tmp_path, TODAY)
+    old = download.fetch_month(client, BBOX, y, m, tmp_path, today)
     os.utime(old, (yesterday, yesterday))
-    download.fetch_month(client, BBOX, 2026, 8, tmp_path, TODAY)
+    download.fetch_month(client, BBOX, y, m, tmp_path, today)
     assert client.calls == 3

@@ -121,12 +121,20 @@ $$PBIAS = \frac{\sum_{i=1}^{n}(O_i - S_i)}{\sum_{i=1}^{n} O_i} \times 100\%$$
 
 ### Caso 4 — Validação da Correção de Viés (Quantile Mapping)
 
-**Procedimento:**
-1. Comparar precipitação ERA5-Land bruta vs. corrigida (QM) vs. observada (INMET)
-2. Calcular RMSE e PBIAS antes e depois da correção
-3. Avaliar redução do viés sistemático
+**Ferramenta:** `python -m era5.cli qm validate` (dentro do serviço `etl`), que calibra em um período A, aplica em um período B independente e compara ERA5 bruto × corrigido com a observação.
 
-**Critério de aceitação:** redução do |PBIAS| em ≥ 30% após correção QM
+**Procedimento:**
+1. Importar a série diária da estação INMET (BDMEP): `docker compose run --rm etl stations import <arquivo.csv> --format bdmep` (ou pelo upload em `/admin`).
+2. Garantir a série ERA5 da célula no mesmo período (`ingest --from --to`, por trimestre).
+3. Rodar a validação com períodos disjuntos (ex.: calibrar 2010–2019, testar 2020–2024):
+   ```bash
+   docker compose run --rm etl qm validate --cell -16.7 -49.3 --station 83423 \
+     --calib-years 2010-2019 --test-years 2020-2024 --csv /data/cache/qm-validate-83423.csv
+   ```
+   A saída traz, por mês e no total: RMSE e PBIAS do ERA5 bruto e do corrigido contra a observação, e a fração de dias chuvosos observada, bruta e corrigida.
+4. Avaliar a redução do viés sistemático e da diferença de frequência de dias chuvosos.
+
+**Critério de aceitação:** redução do |PBIAS| em ≥ 30 % após correção QM no período de teste, e fração de dias chuvosos corrigida a menos de 2 p.p. da observada. Com a estação sintética dos testes (viés conhecido), o PBIAS cai de ≈ −20 % para < 2 %.
 
 ---
 

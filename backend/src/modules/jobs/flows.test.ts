@@ -2,6 +2,7 @@ import { parseExpression } from 'cron-parser';
 import { describe, expect, it } from 'vitest';
 import { QUEUES } from '../../config/queue';
 import {
+  ANNUAL_CRON,
   WEEKLY_CRON,
   WEEKLY_TZ,
   buildBackfillFlow,
@@ -64,6 +65,11 @@ describe('agendamento semanal', () => {
     expect(next.toISOString()).toBe('2026-10-12T05:00:00.000Z');
     expect(next.toLocaleString('sv-SE', { timeZone: WEEKLY_TZ, weekday: 'long' })).toContain('måndag');
     expect(next.toLocaleTimeString('sv-SE', { timeZone: WEEKLY_TZ })).toBe('02:00:00');
+  });
+
+  it('anual: 1º de janeiro 03:00 em Brasília (06:00 UTC)', () => {
+    const expr = parseExpression(ANNUAL_CRON, { tz: WEEKLY_TZ, currentDate: new Date('2026-10-06T12:00:00Z') });
+    expect(expr.next().toDate().toISOString()).toBe('2027-01-01T06:00:00.000Z');
   });
 
   it('todayInTz usa o fuso do agendador', () => {

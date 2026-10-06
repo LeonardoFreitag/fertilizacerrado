@@ -3,7 +3,8 @@ import { AppError } from '../../utils/app-error';
 import { referenceCultivar } from '../cultivars/reference-cultivars';
 import { syntheticSeason } from './synthetic-season';
 
-vi.mock('./era5.repository', () => ({ era5Repository: { getDailySeriesForField: vi.fn() } }));
+vi.mock('./era5.repository', () => ({ era5Repository: { getDailySeriesForField: vi.fn(), getCell: vi.fn().mockResolvedValue(null) } }));
+vi.mock('../admin-qm/qm.repository', () => ({ qmRepository: { activeForCell: vi.fn().mockResolvedValue(null), summaryById: vi.fn().mockResolvedValue(null) } }));
 vi.mock('./msa.repository', () => ({
   msaRepository: {
     findHarvestForProcessing: vi.fn(),
