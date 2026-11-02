@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCultivarSchema } from './create-cultivar.dto';
+import { createCultivarSchema, syncReferenceSchema } from './create-cultivar.dto';
 import { CULTIVAR_PARAM_KEYS, cultivarParamsSchema, type CultivarParams } from './cultivar-params.schema';
 import { updateCultivarSchema } from './update-cultivar.dto';
 
@@ -71,7 +71,7 @@ describe('cultivarParamsSchema', () => {
 });
 
 describe('createCultivarSchema', () => {
-  const valid = { name: 'Minha soja', crop: 'SOJA', ...soja };
+  const valid = { name: 'Minha soja', ...soja };
 
   it('aceita o cadastro completo', () => {
     expect(createCultivarSchema.safeParse(valid).success).toBe(true);
@@ -83,11 +83,30 @@ describe('createCultivarSchema', () => {
     if (!result.success) expect(Object.keys(result.error.flatten().fieldErrors)).toEqual(['isDefault']);
   });
 
-  it('rejeita cultura desconhecida e aplica as relações cruzadas', () => {
-    expect(createCultivarSchema.safeParse({ ...valid, crop: 'TRIGO' }).success).toBe(false);
+  it('rejeita crop (só soja) apontando o campo', () => {
+    for (const crop of ['SOJA', 'MILHO']) {
+      const result = createCultivarSchema.safeParse({ ...valid, crop });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(Object.keys(result.error.flatten().fieldErrors)).toEqual(['crop']);
+    }
+  });
+
+  it('aplica as relações cruzadas', () => {
     const result = createCultivarSchema.safeParse({ ...valid, gdaF2End: 100 });
     if (!result.success) expect(Object.keys(result.error.flatten().fieldErrors)).toEqual(['gdaF2End']);
     expect(result.success).toBe(false);
+  });
+});
+
+describe('syncReferenceSchema', () => {
+  it('aceita unchanged e all; rejeita ausente e outros', () => {
+    expect(syncReferenceSchema.parse({ mode: 'unchanged' })).toEqual({ mode: 'unchanged' });
+    expect(syncReferenceSchema.parse({ mode: 'all' })).toEqual({ mode: 'all' });
+    for (const body of [{}, { mode: 'partial' }]) {
+      const result = syncReferenceSchema.safeParse(body);
+      expect(result.success).toBe(false);
+      if (!result.success) expect(Object.keys(result.error.flatten().fieldErrors)).toEqual(['mode']);
+    }
   });
 });
 

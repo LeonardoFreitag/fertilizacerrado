@@ -8,10 +8,11 @@ export interface ReferenceCultivar extends CultivarParams {
 }
 
 /**
- * Cultivares de referência para o Cerrado. Gravadas pelo seed com
- * `isDefault = true` e imutáveis pela API; corrigir um valor é alterar aqui e
- * rodar o seed de novo. Usadas também pelos testes do motor e pelos scripts de
- * validação, para que todos partam dos mesmos números.
+ * Cultivar de referência para o Cerrado (só soja — Fase 1). Gravada pelo seed
+ * com `isDefault = true` e imutável pela API; corrigir um valor é alterar aqui
+ * e rodar o seed de novo (as cultivares próprias acompanham via
+ * `POST /cultivars/:id/sync-reference`). Usada também pelos testes do motor e
+ * pelos scripts de validação, para que todos partam dos mesmos números.
  *
  * Fontes:
  * - Allen, R. G.; Pereira, L. S.; Raes, D.; Smith, M. (1998). *Crop
@@ -45,27 +46,6 @@ export const REFERENCE_CULTIVARS: readonly ReferenceCultivar[] = [
     kyF2: 0.8,
     kyF3: 1.0,
     kyF4: 0.4,
-  },
-  {
-    name: 'Milho — referência Cerrado',
-    crop: 'MILHO',
-    cycleDescription:
-      'Ciclo médio (~1500 °C·dia). Janelas: F1 0–150, F2 150–600, F3 600–1150, F4 1150–1500 °C·dia. Ky FAO-33: vegetativo 0,4; floração 1,5; enchimento 0,5.',
-    tBase: 10,
-    gdaTotal: 1500,
-    gdaF1End: 150,
-    gdaF2End: 600,
-    gdaF3End: 1150,
-    kcIni: 0.3,
-    kcMid: 1.2,
-    kcEnd: 0.6,
-    depletionFraction: 0.55,
-    zrIni: 0.3,
-    zrMax: 1.0,
-    kyF1: 0.4,
-    kyF2: 0.4,
-    kyF3: 1.5,
-    kyF4: 0.5,
   },
 ];
 

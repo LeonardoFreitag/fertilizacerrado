@@ -37,7 +37,7 @@ cleanup() {
 echo "== Preparação =="
 docker compose up -d worker etl >/dev/null 2>&1
 ADMIN=$(login "$ADMIN_EMAIL" "$ADMIN_PASSWORD")
-sql "TRUNCATE msa_decisions, msa_daily_results, msa_phase_summaries" >/dev/null 2>&1
+sql "TRUNCATE msa_daily_results, msa_phase_summaries" >/dev/null 2>&1
 sql "UPDATE harvests SET latest_run_id = NULL" >/dev/null 2>&1; sql "TRUNCATE msa_runs CASCADE" >/dev/null 2>&1
 sql "TRUNCATE harvests CASCADE" >/dev/null 2>&1; sql "TRUNCATE properties CASCADE" >/dev/null 2>&1
 sql "DELETE FROM users WHERE role <> 'ADMIN'" >/dev/null

@@ -29,7 +29,7 @@ wait_job() { local q=$1 id=$2 limit=${3:-240} t=0; JOB_STATE=timeout; while [ $t
 echo "== Preparação =="
 docker compose up -d worker etl >/dev/null 2>&1
 purge_queues
-sql "TRUNCATE msa_decisions, msa_daily_results, msa_phase_summaries" >/dev/null 2>&1
+sql "TRUNCATE msa_daily_results, msa_phase_summaries" >/dev/null 2>&1
 sql "UPDATE harvests SET latest_run_id = NULL" >/dev/null 2>&1; sql "TRUNCATE msa_runs CASCADE" >/dev/null 2>&1
 sql "TRUNCATE harvests CASCADE" >/dev/null 2>&1; sql "TRUNCATE properties CASCADE" >/dev/null 2>&1
 sql "DELETE FROM era5_daily_data WHERE source = 'synthetic'" >/dev/null

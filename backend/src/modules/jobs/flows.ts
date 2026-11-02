@@ -28,7 +28,6 @@ export type IngestJobData =
 
 export interface ProcessJobData {
   harvestId: string;
-  seed?: number;
   reason: MsaRunReason;
 }
 

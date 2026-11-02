@@ -1,10 +1,9 @@
 /**
  * Orquestra o MSA por safra: era5.repository → engine → banco → API.
- * Processamento síncrono (o Monte Carlo leva ~0,1 s); fila e agendamento
- * ficam para a próxima change. `docs/modulos/msa.md`.
+ * Run determinística (balanço diário + resumos por janela + índice do ciclo);
+ * a predição de produtividade usa a Ym da safra no momento. `docs/modulos/msa.md`.
  */
-import { randomInt } from 'node:crypto';
-import type { MsaDecision, MsaRun, MsaRunReason, MsaScenario } from '@prisma/client';
+import type { MsaRun, MsaRunReason } from '@prisma/client';
 import { qmRepository, type QmCalibrationSummary } from '../admin-qm/qm.repository';
 import { AppError } from '../../utils/app-error';
 import { CULTIVAR_PARAM_KEYS } from '../cultivars/dtos/cultivar-params.schema';
@@ -12,22 +11,22 @@ import { harvestService } from '../harvests/harvest.service';
 import type { AuthUser } from '../properties/property.service';
 import {
   ENGINE_VERSION,
+  cycleYieldIndex,
   dailyGDA,
-  generateDecisionScenarios,
-  runMonteCarlo,
+  predictedYield,
+  runDailyBalance,
+  summarizeByPhase,
   type CultivarParams,
+  type CycleYield,
   type DailyBalanceRow,
   type DailyWeather,
-  type DecisionScenarios,
-  type MonteCarloResult,
   type Phase,
-  type YieldPhase,
+  type PhaseSummary,
 } from './engine';
 import { era5Repository } from './era5.repository';
 import {
   msaRepository,
   type DailyCreate,
-  type DecisionWithUser,
   type HarvestForProcessing,
   type RunWithSummaries,
   type SummaryCreate,
@@ -37,8 +36,6 @@ import {
 export const DATA_LAG_DAYS = 6;
 /** Latossolo Vermelho do Cerrado (`docs/msa/algoritmos.md` §5). */
 export const DEFAULT_SOIL = { thetaFC: 0.28, thetaWP: 0.12 } as const;
-const ITERATIONS = 1000;
-const MAX_SEED = 2 ** 31 - 1;
 const DAY_MS = 86_400_000;
 
 export interface CultivarSnapshot extends CultivarParams {
@@ -62,16 +59,9 @@ export interface PhaseView {
   etcAdjAccum: number;
   precipAccum: number;
   yieldReductionPct: number | null;
-  validIterations: number;
-  percentiles: {
-    ksMean: { p10: number; p50: number; p90: number } | null;
-    yieldReductionPct: { p10: number; p50: number; p90: number } | null;
-    etcAdjAccum: { p10: number; p50: number; p90: number } | null;
-  };
 }
 
 export interface ProcessOptions {
-  seed?: number;
   reason?: MsaRunReason;
   jobId?: string;
 }
@@ -86,10 +76,14 @@ export interface RunView {
   finishedAt: Date;
   dateFrom: string;
   dateTo: string;
-  seed: number | null;
-  iterations: number | null;
-  sigmaPrecip: number | null;
-  sigmaTemp: number | null;
+  /** Ym da safra no momento da run (sc/ha), ou null */
+  expectedYield: number | null;
+  /** Π_j [1 − Ky_j (1 − Ks̄_j)] sobre as janelas alcançadas; null em NEEDS_DATA/FAILED */
+  yieldIndex: number | null;
+  /** expectedYield × yieldIndex (sc/ha); null sem Ym */
+  predictedYield: number | null;
+  /** Janelas F1–F4 com dias na série (0–4) */
+  phasesReached: number | null;
   engineVersion: string;
   cultivarSnapshot: unknown;
   soilSnapshot: unknown;
@@ -105,6 +99,12 @@ export interface ProcessResult {
   run: RunView;
   phases: PhaseView[] | null;
   currentPhase: Phase | null;
+}
+
+/** GET /msa: o último resultado mais o aviso de cultivar alterada desde a run. */
+export interface LatestResult extends ProcessResult {
+  /** true quando algum parâmetro científico da cultivar atual difere do cultivarSnapshot da run */
+  cultivarChangedSinceRun: boolean;
 }
 
 function toDate(s: string): Date {
@@ -131,10 +131,10 @@ export function toRunView(run: MsaRun): RunView {
     finishedAt: run.finishedAt,
     dateFrom: toStr(run.dateFrom),
     dateTo: toStr(run.dateTo),
-    seed: run.seed,
-    iterations: run.iterations,
-    sigmaPrecip: run.sigmaPrecip,
-    sigmaTemp: run.sigmaTemp,
+    expectedYield: run.expectedYield,
+    yieldIndex: run.yieldIndex,
+    predictedYield: run.predictedYield,
+    phasesReached: run.phasesReached,
     engineVersion: run.engineVersion,
     cultivarSnapshot: run.cultivarSnapshot,
     soilSnapshot: run.soilSnapshot,
@@ -157,9 +157,6 @@ async function withCalibration<T extends { qmCalibrationId: string | null; qmCal
   return views.map((v) => ({ ...v, qmCalibration: v.qmCalibrationId ? (summaries.get(v.qmCalibrationId) ?? null) : null }));
 }
 
-const pct = (p10: number | null, p50: number | null, p90: number | null) =>
-  p10 === null || p50 === null || p90 === null ? null : { p10, p50, p90 };
-
 export function toPhaseView(s: RunWithSummaries['phaseSummaries'][number]): PhaseView {
   return {
     phase: s.phase,
@@ -168,13 +165,28 @@ export function toPhaseView(s: RunWithSummaries['phaseSummaries'][number]): Phas
     etcAdjAccum: s.etcAdjAccum,
     precipAccum: s.precipAccum,
     yieldReductionPct: s.yieldReductionPct,
-    validIterations: s.validIterations,
-    percentiles: {
-      ksMean: pct(s.ksMeanP10, s.ksMeanP50, s.ksMeanP90),
-      yieldReductionPct: pct(s.yieldReductionP10, s.yieldReductionP50, s.yieldReductionP90),
-      etcAdjAccum: pct(s.etcAdjAccumP10, s.etcAdjAccumP50, s.etcAdjAccumP90),
-    },
   };
+}
+
+/**
+ * A cultivar mudou desde a run? Itera sobre a união das chaves numéricas do
+ * snapshot e da cultivar atual (não sobre uma lista fixa): chave ausente de um
+ * lado conta como null, logo um parâmetro novo em `CultivarParams` (ex.: `tUpper`)
+ * presente só na cultivar atual ou só no snapshot já conta como mudança.
+ * Chaves de identificação (`id`, `name`, `crop`) e demais não numéricas são ignoradas.
+ */
+export function cultivarChangedSinceRun(snapshot: unknown, current: Record<string, unknown>): boolean {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  const snap = snapshot as Record<string, unknown>;
+  const numericOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const keys = new Set([...Object.keys(snap), ...Object.keys(current)]);
+  for (const key of keys) {
+    const before = numericOrNull(snap[key]);
+    const now = numericOrNull(current[key]);
+    if (before === null && now === null) continue; // não numérica dos dois lados (id, name, crop, datas…)
+    if (before !== now) return true;
+  }
+  return false;
 }
 
 /** Snapshot = os 15 parâmetros + identificação; o motor recebe o snapshot, não o registro. */
@@ -244,17 +256,21 @@ function dailyRows(series: DailyBalanceRow[]): DailyCreate[] {
   }));
 }
 
-function summaryRows(result: MonteCarloResult): SummaryCreate[] {
-  return result.baseline.map((b, i) => {
-    const p = result.phases[i]!;
-    return {
-      phase: b.phase, days: b.days, ksMean: b.ksMean, etcAdjAccum: b.etcAdjAccum, precipAccum: b.precipAccum,
-      yieldReductionPct: b.yieldReductionPct, validIterations: p.validIterations,
-      ksMeanP10: p.ksMean?.p10 ?? null, ksMeanP50: p.ksMean?.p50 ?? null, ksMeanP90: p.ksMean?.p90 ?? null,
-      yieldReductionP10: p.yieldReductionPct?.p10 ?? null, yieldReductionP50: p.yieldReductionPct?.p50 ?? null, yieldReductionP90: p.yieldReductionPct?.p90 ?? null,
-      etcAdjAccumP10: p.etcAdjAccum?.p10 ?? null, etcAdjAccumP50: p.etcAdjAccum?.p50 ?? null, etcAdjAccumP90: p.etcAdjAccum?.p90 ?? null,
-    };
-  });
+function summaryRows(summaries: PhaseSummary[]): SummaryCreate[] {
+  return summaries.map((s) => ({
+    phase: s.phase, days: s.days, ksMean: s.ksMean, etcAdjAccum: s.etcAdjAccum, precipAccum: s.precipAccum,
+    yieldReductionPct: s.yieldReductionPct,
+  }));
+}
+
+/** Campos da run derivados do índice do ciclo e da Ym da safra. */
+export function yieldFields(cycle: CycleYield, expectedYield: number | null) {
+  return {
+    expectedYield,
+    yieldIndex: cycle.yieldIndex,
+    phasesReached: cycle.phasesReached,
+    predictedYield: expectedYield === null ? null : predictedYield(expectedYield, cycle.yieldIndex),
+  };
 }
 
 function noResult(): AppError {
@@ -296,21 +312,20 @@ async function runProcessing(harvest: HarvestForProcessing, options: ProcessOpti
       return { run: await runView(run), phases: null, currentPhase: null };
     }
 
-    const seed = options.seed ?? randomInt(0, MAX_SEED + 1);
     try {
-      const result = runMonteCarlo(interval.days, cultivar, soil, {
-        iterations: ITERATIONS, seed, altitude: soil.altitudeM, initialDepletion: 0,
-      });
+      const series = runDailyBalance(interval.days, cultivar, soil, { altitude: soil.altitudeM, initialDepletion: 0 });
+      const summaries = summarizeByPhase(series, cultivar);
+      const cycle = cycleYieldIndex(summaries);
       const run = await msaRepository.createSucceededRun(
-        { ...base, status: 'SUCCEEDED', finishedAt: new Date(), seed, iterations: result.iterations, sigmaPrecip: result.sigmaPrecip, sigmaTemp: result.sigmaTemp },
-        dailyRows(result.baselineSeries),
-        summaryRows(result),
+        { ...base, status: 'SUCCEEDED', finishedAt: new Date(), ...yieldFields(cycle, harvest.expectedYield) },
+        dailyRows(series),
+        summaryRows(summaries),
       );
-      const last = result.baselineSeries[result.baselineSeries.length - 1];
+      const last = series[series.length - 1];
       return { run: await runView(run), phases: run.phaseSummaries.map(toPhaseView), currentPhase: last?.phase ?? null };
     } catch (error) {
       const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-      const failed = await msaRepository.createRun({ ...base, status: 'FAILED', finishedAt: new Date(), seed, iterations: ITERATIONS, error: message });
+      const failed = await msaRepository.createRun({ ...base, status: 'FAILED', finishedAt: new Date(), error: message });
       throw new AppError(500, 'MSA_PROCESSING_FAILED', `Falha no processamento (run ${failed.id}): ${message}`);
     }
 }
@@ -329,13 +344,18 @@ export const msaService = {
     return runProcessing(harvest, options, null);
   },
 
-  async getLatest(user: AuthUser, harvestId: string): Promise<ProcessResult> {
-    await accessibleHarvest(user, harvestId);
+  async getLatest(user: AuthUser, harvestId: string): Promise<LatestResult> {
+    const harvest = await accessibleHarvest(user, harvestId);
     const run = await msaRepository.latestSucceededRun(harvestId);
     if (!run) throw noResult();
     const daily = await msaRepository.dailyResults(run.id);
     const last = daily[daily.length - 1];
-    return { run: await runView(run), phases: run.phaseSummaries.map(toPhaseView), currentPhase: (last?.phase as Phase) ?? null };
+    return {
+      run: await runView(run),
+      phases: run.phaseSummaries.map(toPhaseView),
+      currentPhase: (last?.phase as Phase) ?? null,
+      cultivarChangedSinceRun: cultivarChangedSinceRun(run.cultivarSnapshot, harvest.cultivar as unknown as Record<string, unknown>),
+    };
   },
 
   async getDaily(user: AuthUser, harvestId: string, runId?: string) {
@@ -350,52 +370,4 @@ export const msaService = {
     await accessibleHarvest(user, harvestId);
     return withCalibration((await msaRepository.listRuns(harvestId)).map(toRunView));
   },
-
-  /** Cenários sobre uma run (padrão: a última SUCCEEDED); nada é persistido. */
-  async decisionScenarios(
-    user: AuthUser,
-    harvestId: string,
-    input: { phase: YieldPhase; doseBase: number; efficiencyBase: number; runId?: string },
-  ): Promise<{ runId: string; scenarios: DecisionScenarios }> {
-    await accessibleHarvest(user, harvestId);
-    const run = input.runId ? await msaRepository.findRun(harvestId, input.runId) : await msaRepository.latestSucceededRun(harvestId);
-    if (!run) throw input.runId ? new AppError(404, 'NOT_FOUND', 'Run não encontrada para esta safra.') : noResult();
-    if (run.status !== 'SUCCEEDED') throw new AppError(422, 'RUN_WITHOUT_RESULTS', `A run ${run.id} não tem resultados (${run.status}).`);
-
-    const summary = run.phaseSummaries.find((s) => s.phase === input.phase);
-    if (!summary || summary.ksMeanP50 === null) {
-      throw new AppError(422, 'PHASE_NOT_REACHED', `A janela ${input.phase} não foi alcançada nesta run.`);
-    }
-    const daily = await msaRepository.dailyResults(run.id);
-    const baselineSeries = daily.map(({ runId: _r, date, phase, ...rest }) => ({ date: toStr(date), phase: phase as Phase, ...rest }));
-    const scenarios = generateDecisionScenarios({
-      phase: input.phase, ksP50: summary.ksMeanP50, baselineSeries,
-      cultivar: run.cultivarSnapshot as unknown as CultivarParams,
-      doseBase: input.doseBase, efficiencyBase: input.efficiencyBase,
-    });
-    return { runId: run.id, scenarios };
-  },
-
-  async recordDecision(
-    user: AuthUser,
-    harvestId: string,
-    input: { phase: YieldPhase; scenario: MsaScenario; doseBase: number; efficiencyBase: number; justification: string; runId?: string },
-  ): Promise<DecisionWithUser> {
-    const { runId, scenarios } = await this.decisionScenarios(user, harvestId, input);
-    const payload = input.scenario === 'A' ? scenarios.a : input.scenario === 'B' ? scenarios.b : scenarios.c;
-    if (!payload) {
-      throw new AppError(422, 'SCENARIO_UNAVAILABLE', scenarios.bUnavailableReason ?? 'Cenário indisponível para esta janela.');
-    }
-    return msaRepository.createDecision({
-      harvestId, runId, phase: input.phase, scenario: input.scenario, doseBase: input.doseBase,
-      efficiencyBase: input.efficiencyBase, scenarioPayload: payload as object, justification: input.justification, decidedById: user.id,
-    });
-  },
-
-  async listDecisions(user: AuthUser, harvestId: string): Promise<DecisionWithUser[]> {
-    await accessibleHarvest(user, harvestId);
-    return msaRepository.listDecisions(harvestId);
-  },
 };
-
-export type { MsaDecision };

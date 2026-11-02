@@ -5,14 +5,15 @@
 > onde está no código e o que muda se a decisão for revista.
 >
 > Fonte: seções "Open Questions" dos designs em `openspec/changes/archive/`.
+> As decisões tomadas em reunião estão em "Registro de decisões", ao fim do arquivo.
 
 | # | Tema | Status |
 |---|---|---|
-| 1 | Perturbação do Monte Carlo: sistemática × mista | Aguardando decisão |
+| 1 | ~~Perturbação do Monte Carlo: sistemática × mista~~ | Removida em 2026-11-02 (superada: o Monte Carlo saiu do motor) |
 | 2 | Agregação diária do ERA5-Land: dia UTC × dia local | Aguardando decisão |
 | 3 | Fator de vento 0,748 (10 m → 2 m) | Aguardando decisão |
 | 4 | Limiares de severidade do Ks (0,85 / 0,70) | Aguardando decisão |
-| 5 | Parâmetros congelados de cultivar em uso | Aguardando decisão |
+| 5 | Parâmetros congelados de cultivar em uso | **Decidido** em 2026-11-02 (`refocus-on-yield-prediction`): edição liberada |
 | 6 | Correção de viés (QM): defaults de distância, anos, limiar e cauda | Implementado com defaults; aguardando ajuste |
 | 7 | Estação de referência para validação de ET₀ (Caso 1) | Decisão provisória: Goiânia |
 | 8 | Talhões com múltiplos polígonos (MultiPolygon) | Baixa prioridade |
@@ -20,26 +21,14 @@
 
 ---
 
-## 1. Perturbação do Monte Carlo — sistemática × mista
+## 1. ~~Perturbação do Monte Carlo — sistemática × mista~~ (removida)
 
-**Implementado:** um único sorteio por iteração para o fator de precipitação
-($f_i \sim \mathcal{N}(1;\ 0{,}30^2)$, truncado em ≥ 0) e um único para o
-deslocamento térmico ($\delta_i \sim \mathcal{N}(0;\ 0{,}6^2)$ °C), aplicados a
-toda a série da safra.
-
-**Justificativa:** a incerteza relevante é o viés da reanálise e a variabilidade
-interanual, ambos correlacionados no tempo. Ruído diário independente com
-σ = 30 % se cancela em grande parte na soma de uma janela de 20–40 dias (o desvio
-da soma cresce com √n enquanto a soma cresce com n), o que estreitaria
-artificialmente o intervalo P10–P90.
-
-**Alternativa:** variante mista — viés por iteração **mais** ruído diário
-independente, com σ menores para cada componente.
-
-**Onde:** `backend/src/modules/msa/engine/monte-carlo.ts`, `docs/msa/algoritmos.md` §7.
-
-**Se mudar:** alteração local em `monte-carlo.ts`, sem efeito na API; exigiria
-reprocessar as safras e incrementar `ENGINE_VERSION` (minor).
+**Superada em 2026-11-02.** O módulo de Monte Carlo (`engine/monte-carlo.ts`,
+`random.ts`) foi removido do motor na change `refocus-on-yield-prediction`,
+depois que a reunião com o professor Adilson redefiniu o objetivo do MSA (ver
+"Registro de decisões"). A pergunta sistemática × mista deixa de existir; uma
+eventual faixa de incerteza da produtividade predita, se vier a ser avaliada,
+será uma questão nova. A numeração dos itens seguintes foi mantida.
 
 ---
 
@@ -90,21 +79,34 @@ produtividade Ky × (1 − Ks) acima de 10 % / 25 %).
 
 ---
 
-## 5. Parâmetros congelados de cultivar em uso
+## 5. Parâmetros congelados de cultivar em uso — **decidido (2026-11-02)**
 
-**Implementado:** uma cultivar com qualquer safra vinculada não aceita alteração
-de parâmetros científicos (409 `CULTIVAR_IN_USE`); apenas nome e descrição.
-Motivo original: reprodutibilidade dos resultados.
+**Decisão:** edição liberada, na change `refocus-on-yield-prediction`
+(Decisão 10 do design). O `PATCH` nos parâmetros científicos de uma cultivar
+com safras responde 200; só o `DELETE` de cultivar em uso continua bloqueado
+(409 `CULTIVAR_IN_USE`).
 
-**Mudança de contexto:** desde `add-msa-processing`, cada run grava
-`cultivarSnapshot` com os parâmetros efetivamente usados. A reprodutibilidade de
-runs passadas já não depende do registro da cultivar.
+**Justificativa:** desde `add-msa-processing`, cada run grava `cultivarSnapshot`
+com os parâmetros efetivamente usados e o motor recebe o snapshot, não o
+registro atual. A reprodutibilidade das runs passadas não depende do registro
+da cultivar, então o congelamento era redundante.
 
-**Alternativa:** liberar a edição; runs novas usam os novos valores, runs antigas
-permanecem reproduzíveis pelo snapshot. O painel poderia indicar "parâmetros da
-cultivar mudaram desde esta run".
+**Consequências implementadas:**
+- `GET /harvests/:id/msa` devolve `cultivarChangedSinceRun` (comparação das
+  chaves de `CultivarParams` do snapshot com a cultivar atual) e o painel avisa
+  "parâmetros da cultivar mudaram desde esta run"; o formulário de edição mostra
+  "Runs já calculadas guardam os parâmetros da época; as próximas usam os novos
+  valores".
+- Como a referência tabelada pode mudar (ex.: T_base na change de graus-dia de
+  Ometto), entrou `POST /cultivars/:id/sync-reference` (`unchanged` | `all`),
+  apoiado no `referenceSnapshot` gravado na criação da cultivar.
 
-**Onde:** `backend/src/modules/cultivars/cultivar.service.ts`.
+**Onde:** `backend/src/modules/cultivars/cultivar.service.ts`,
+`backend/src/modules/msa/msa.service.ts` (`cultivarChangedSinceRun`),
+`docs/modulos/msa.md` §1.
+
+**Histórico:** implementação original — 409 `CULTIVAR_IN_USE` para qualquer
+parâmetro científico de cultivar com safra, motivada pela reprodutibilidade.
 
 ---
 
@@ -173,8 +175,44 @@ emitir laudos com responsabilidade técnica.
 
 ---
 
+## Registro de decisões
+
+### 2026-11-02 — Reunião com o professor Adilson (Meteorologia e Climatologia Agrícola)
+
+**Decisão:** o objetivo do MSA passa a ser **predizer a produtividade da soja
+frente à produtividade potencial (Ym) informada por safra**, com base no estresse
+hídrico por janela fenológica, pela combinação multiplicativa do FAO-33
+(índice do ciclo = Π_j [1 − Ky_j (1 − Ks̄_j)]; produtividade predita = Ym × índice).
+
+**Consequências** (change `refocus-on-yield-prediction`):
+- Monte Carlo, percentis P10/P50/P90, semente e parâmetros σP/σT **removidos**
+  do motor, do schema, da API, do painel e da validação (Caso 3 do protocolo e
+  Fase 3 do roteiro); o motor passa a 2.0.0, determinístico. Questão nº 1
+  superada. A predição é um valor único, sem faixa de incerteza (limitação
+  registrada em `algoritmos.md` §6).
+- Cenários de decisão de adubação (a/b/c) e registro de decisões
+  (`msa_decisions`) **removidos**; o sistema não recomenda nem registra
+  decisão de manejo.
+- Milho **removido**: soja é a única cultura da Fase 1.
+- Ninguém digita parâmetros de cultivar do zero: **nova cultivar nasce sempre da
+  referência tabelada**, com divergência visível campo a campo e ação
+  "Atualizar a partir da referência". Questão nº 5 decidida (edição liberada).
+- `Ym` informada por safra em sc/ha (`expectedYield`, teto de sanidade 250 —
+  **a confirmar com a pesquisadora**); Caso 2 da validação passa a comparar a
+  produtividade predita com a observada (erro relativo).
+- OE5 da dissertação marcado como substituído em
+  `docs/dissertacao/mapa-objetivos-evidencias.md`; a redação final do objetivo
+  é da pesquisadora e do orientador.
+
+**Próximas changes decorrentes da reunião:** graus-dia pelo método de Ometto
+(`adopt-ometto-degree-days`, com `tUpper` na cultivar) e balanço hídrico de
+entressafra.
+
+---
+
 ## Como registrar a decisão
 
 Para cada item decidido, abrir uma change no OpenSpec (`/opsx:propose`)
 citando o número desta lista, para que a decisão, a justificativa e a alteração
-de código fiquem rastreáveis no arquivo de changes.
+de código fiquem rastreáveis no arquivo de changes. Decisões tomadas em reunião
+entram também em "Registro de decisões", com data e consequências.

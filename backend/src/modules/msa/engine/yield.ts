@@ -5,7 +5,7 @@
  * Irrigation and Drainage Paper 33, Eq. 3.2 (1 − Ya/Ym = Ky (1 − ETa/ETm)),
  * aplicada por janela com ETa/ETm ≈ Ks médio; `docs/msa/algoritmos.md` §6.
  */
-import type { CultivarParams, DailyBalanceRow, PhaseSummary, YieldPhase } from './types';
+import type { CultivarParams, CycleYield, DailyBalanceRow, PhaseSummary, YieldPhase } from './types';
 import { YIELD_PHASES } from './types';
 
 /**
@@ -67,4 +67,43 @@ export function summarizeByPhase(
       yieldReductionPct: ksMean === null ? null : yieldReduction(ksMean, kyFor(phase, cultivar)) * 100,
     };
   });
+}
+
+/**
+ * Índice de produtividade do ciclo: combinação multiplicativa das janelas,
+ * Ya/Ym = Π_j [1 − Ky_j · (1 − Ks̄_j)] (FAO-33, Doorenbos & Kassam 1979,
+ * resposta a déficits em estádios sucessivos; `docs/msa/algoritmos.md` §6).
+ * Reaproveita `yieldReductionPct` de `summarizeByPhase`; janela sem dias
+ * (não alcançada) entra com fator 1 — "o restante do ciclo sem estresse".
+ * `phasesReached` é o número de janelas com dias.
+ */
+export function cycleYieldIndex(summaries: ReadonlyArray<PhaseSummary>): CycleYield {
+  const factors: [number, number, number, number] = [1, 1, 1, 1];
+  let phasesReached = 0;
+  for (const phase of YIELD_PHASES) {
+    const s = summaries.find((x) => x.phase === phase);
+    if (!s) throw new RangeError(`Resumo da janela ${phase} ausente`);
+    if (s.days > 0) {
+      phasesReached++;
+      const reduction = s.yieldReductionPct ?? 0;
+      if (!Number.isFinite(reduction)) throw new RangeError(`yieldReductionPct inválido em ${phase}: ${reduction}`);
+      const f = 1 - reduction / 100;
+      factors[YIELD_PHASES.indexOf(phase)] = f < 0 ? 0 : f > 1 ? 1 : f;
+    }
+  }
+  const yieldIndex = factors[0] * factors[1] * factors[2] * factors[3];
+  return { yieldIndex, phasesReached, factors };
+}
+
+/**
+ * Produtividade predita: Ya = Ym × índice do ciclo (FAO-33 Eq. 3.2 invertida
+ * para Ya; `docs/msa/algoritmos.md` §6). `ym` em sc/ha (ou qualquer unidade
+ * de Ya); o resultado sai na mesma unidade.
+ */
+export function predictedYield(ym: number, yieldIndex: number): number {
+  if (!Number.isFinite(ym) || ym <= 0) throw new RangeError(`ym deve ser finito e > 0: ${ym}`);
+  if (!Number.isFinite(yieldIndex) || yieldIndex < 0 || yieldIndex > 1) {
+    throw new RangeError(`yieldIndex deve estar em [0, 1]: ${yieldIndex}`);
+  }
+  return ym * yieldIndex;
 }

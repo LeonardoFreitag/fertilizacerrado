@@ -250,7 +250,7 @@ Três filas no Redis da stack (`redis`, política `noeviction`, exigida pelo Bul
 | Fila | Consumidor | Payload | Opções |
 |---|---|---|---|
 | `era5-ingest` | **ETL Python** (`python -m era5.cli worker`, serviço `etl`, concorrência 1) | `{ kind: "latest" }` — `[hoje − 16, hoje − 6]`, todas as células; `{ kind: "range", from, to, bbox? }` — células dentro da bbox `[N, W, S, E]` ou todas; `{ kind: "cell", lat, lon, from, to }` — só a célula | `attempts: 3`, backoff exponencial a partir de 5 min |
-| `msa-process` | **worker Node** (`node dist/worker.js`, serviço `worker`, concorrência 4) | `{ harvestId, seed?, reason: WEEKLY \| BACKFILL \| MANUAL }` | `attempts: 1` (o processamento é determinístico; falha vira run `FAILED`) |
+| `msa-process` | **worker Node** (`node dist/worker.js`, serviço `worker`, concorrência 4) | `{ harvestId, reason: WEEKLY \| BACKFILL \| MANUAL }` | `attempts: 1` (o processamento é determinístico; falha vira run `FAILED`) |
 | `msa-weekly` | worker Node | `trigger` (repetível) e `run` (pai do flow semanal) | scheduler `msa-weekly-trigger`: `pattern '0 2 * * 1'`, `tz 'America/Sao_Paulo'` |
 
 A API só **enfileira**; nenhuma réplica instancia worker ou agendador.

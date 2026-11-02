@@ -1,7 +1,7 @@
 import { referenceCultivar } from '../../cultivars/reference-cultivars';
 import type { CultivarParams, SoilParams } from './types';
 
-export { mulberry32, uniform } from './random';
+export { mulberry32, uniform } from '../synthetic-season';
 
 /** Soja — referência Cerrado (mesmos valores do seed). */
 export const SOJA: CultivarParams = referenceCultivar('SOJA');

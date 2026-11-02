@@ -5,13 +5,15 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/states';
 import { useToast } from '@/components/toast';
 import { Badge, Button, LinkButton, PageHeader } from '@/components/ui';
 import { messageFor } from '@/lib/api/errors';
-import { CROP_LABELS, type CultivarResponse } from '@/lib/api/types';
+import type { CultivarResponse } from '@/lib/api/types';
+import { divergenceLabel, divergentFields, toNumbers } from '@/lib/cultivars/reference';
 import { useSession } from '@/lib/auth/session';
 import { formatNumber } from '@/lib/msa/msa';
 import { REFERENCE_NOTE } from '@/lib/validation/cultivar';
-import { useCultivars, useDeleteCultivar } from './api';
+import { useCultivars, useDeleteCultivar, useReferenceCultivar } from './api';
 
-function CultivarCard({ c, canManage, onDelete }: { c: CultivarResponse; canManage: boolean; onDelete?: (c: CultivarResponse) => void }) {
+function CultivarCard({ c, canManage, onDelete, reference }: { c: CultivarResponse; canManage: boolean; onDelete?: (c: CultivarResponse) => void; reference?: CultivarResponse }) {
+  const divergent = !c.isDefault && reference ? divergentFields(toNumbers(c), reference) : null;
   return (
     <li className="card flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -19,7 +21,11 @@ function CultivarCard({ c, canManage, onDelete }: { c: CultivarResponse; canMana
           <Link to={`/cultivares/${c.id}${c.isDefault || !canManage ? '' : '/editar'}`} className="font-medium text-slate-900 hover:underline">
             {c.name}
           </Link>
-          <div className="text-sm text-slate-600">{CROP_LABELS[c.crop]}</div>
+          {divergent && (
+            <div className="text-xs text-slate-600" data-testid="card-divergence">
+              {divergenceLabel(divergent.length)}
+            </div>
+          )}
         </div>
         <Badge tone={c.isDefault ? 'green' : 'slate'}>{c.isDefault ? 'referência' : 'própria'}</Badge>
       </div>
@@ -66,6 +72,7 @@ export function CultivarsPage() {
   const { user } = useSession();
   const canManage = user?.role === 'AGRONOMO' || user?.role === 'ADMIN';
   const cultivars = useCultivars();
+  const referenceQuery = useReferenceCultivar();
   const remove = useDeleteCultivar();
   const toast = useToast();
   const [deleting, setDeleting] = useState<CultivarResponse | null>(null);
@@ -113,7 +120,7 @@ export function CultivarsPage() {
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {mine.map((c) => (
-              <CultivarCard key={c.id} c={c} canManage={canManage} onDelete={setDeleting} />
+              <CultivarCard key={c.id} c={c} canManage={canManage} onDelete={setDeleting} reference={referenceQuery.data} />
             ))}
           </ul>
         )}

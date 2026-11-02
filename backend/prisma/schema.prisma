@@ -41,7 +41,6 @@ model User {
   supervisedProperties Property[]    @relation("PropertyAgronomist")
   cultivars            Cultivar[]
   msaRuns              MsaRun[]
-  msaDecisions         MsaDecision[]
 
   @@index([resetToken])
   @@map("users")
@@ -121,7 +120,6 @@ model Era5Cell {
 
 enum Crop {
   SOJA
-  MILHO
 
   @@map("crop")
 }
@@ -164,6 +162,9 @@ model Cultivar {
   kyF3              Float    @map("ky_f3")
   kyF4              Float    @map("ky_f4")
   isDefault         Boolean  @default(false) @map("is_default")
+  /// Os 15 parâmetros da referência no momento da criação (nulo na própria referência);
+  /// permite ao sync-reference saber o que o técnico alterou
+  referenceSnapshot Json?    @map("reference_snapshot")
   createdById       String?  @map("created_by_id") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -187,6 +188,8 @@ model Harvest {
   season        String
   status        HarvestStatus @default(ACTIVE)
   notes         String?
+  /// Produtividade potencial (Ym) informada pelo técnico, sc/ha; base da produtividade predita
+  expectedYield Float?        @map("expected_yield")
   /// Última run SUCCEEDED do MSA (leitura rápida); NEEDS_DATA/FAILED só no histórico
   latestRunId   String?       @unique @map("latest_run_id") @db.Uuid
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -197,7 +200,6 @@ model Harvest {
   cultivar     Cultivar      @relation(fields: [cultivarId], references: [id], onDelete: Restrict)
   latestRun    MsaRun?       @relation("HarvestLatestRun", fields: [latestRunId], references: [id], onDelete: SetNull)
   msaRuns      MsaRun[]      @relation("HarvestRuns")
-  msaDecisions MsaDecision[]
 
   @@index([fieldId])
   @@index([cultivarId])
@@ -280,14 +282,6 @@ enum MsaRunStatus {
   @@map("msa_run_status")
 }
 
-enum MsaScenario {
-  A
-  B
-  C
-
-  @@map("msa_scenario")
-}
-
 /// Origem de uma run do MSA: ciclo semanal, backfill ao criar a safra ou disparo manual.
 enum MsaRunReason {
   WEEKLY
@@ -308,10 +302,14 @@ model MsaRun {
   finishedAt       DateTime       @map("finished_at") @db.Timestamptz(3)
   dateFrom         DateTime       @map("date_from") @db.Date
   dateTo           DateTime       @map("date_to") @db.Date
-  seed             Int?
-  iterations       Int?
-  sigmaPrecip      Float?         @map("sigma_precip")
-  sigmaTemp        Float?         @map("sigma_temp")
+  /// Ym da safra no momento do processamento (sc/ha); nulo se não informada
+  expectedYield    Float?         @map("expected_yield")
+  /// Π_j [1 − Ky_j (1 − Ks̄_j)] sobre as janelas alcançadas (FAO-33); nulo em NEEDS_DATA/FAILED
+  yieldIndex       Float?         @map("yield_index")
+  /// expectedYield × yieldIndex (sc/ha); nulo sem Ym
+  predictedYield   Float?         @map("predicted_yield")
+  /// Janelas F1–F4 com dias na série (0–4)
+  phasesReached    Int?           @map("phases_reached")
   /// Os 15 parâmetros científicos + id, name, crop, como estavam no momento
   cultivarSnapshot Json           @map("cultivar_snapshot")
   /// { thetaFC, thetaWP, altitudeM, soilDefaults }
@@ -333,7 +331,6 @@ model MsaRun {
   triggeredBy    User?             @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
   dailyResults   MsaDailyResult[]
   phaseSummaries MsaPhaseSummary[]
-  decisions      MsaDecision[]
 
   @@index([harvestId, startedAt])
   @@map("msa_runs")
@@ -363,7 +360,7 @@ model MsaDailyResult {
   @@map("msa_daily_results")
 }
 
-/// Resumo de uma janela (baseline + percentis do Monte Carlo).
+/// Resumo de uma janela fenológica (FAO-33): Ks médio, acumulados e redução de produtividade.
 model MsaPhaseSummary {
   runId             String @map("run_id") @db.Uuid
   phase             String
@@ -372,16 +369,6 @@ model MsaPhaseSummary {
   etcAdjAccum       Float  @map("etc_adj_accum")
   precipAccum       Float  @map("precip_accum")
   yieldReductionPct Float? @map("yield_reduction_pct")
-  validIterations   Int    @map("valid_iterations")
-  ksMeanP10         Float? @map("ks_mean_p10")
-  ksMeanP50         Float? @map("ks_mean_p50")
-  ksMeanP90         Float? @map("ks_mean_p90")
-  yieldReductionP10 Float? @map("yield_reduction_p10")
-  yieldReductionP50 Float? @map("yield_reduction_p50")
-  yieldReductionP90 Float? @map("yield_reduction_p90")
-  etcAdjAccumP10    Float? @map("etc_adj_accum_p10")
-  etcAdjAccumP50    Float? @map("etc_adj_accum_p50")
-  etcAdjAccumP90    Float? @map("etc_adj_accum_p90")
 
   run MsaRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
@@ -390,27 +377,6 @@ model MsaPhaseSummary {
 }
 
 /// Escolha do técnico entre os cenários (a)/(b)/(c) — o sistema registra, não recomenda.
-model MsaDecision {
-  id              String      @id @default(uuid()) @db.Uuid
-  harvestId       String      @map("harvest_id") @db.Uuid
-  runId           String      @map("run_id") @db.Uuid
-  phase           String
-  scenario        MsaScenario
-  doseBase        Float       @map("dose_base")
-  efficiencyBase  Float       @map("efficiency_base")
-  /// O cenário escolhido exatamente como foi calculado
-  scenarioPayload Json        @map("scenario_payload")
-  justification   String
-  decidedById     String?     @map("decided_by_id") @db.Uuid
-  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-
-  harvest   Harvest @relation(fields: [harvestId], references: [id], onDelete: Cascade)
-  run       MsaRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
-  decidedBy User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
-
-  @@index([harvestId, createdAt])
-  @@map("msa_decisions")
-}
 
 // ---------------------------------------------------------------------------
 // Estações meteorológicas e correção de viés (Quantile Mapping)

@@ -275,7 +275,7 @@ export function penmanMonteith(
 
 /**
  * ET₀ (mm dia⁻¹) com γ pré-calculado — para laços em que a altitude é fixa
- * (balanço hídrico, Monte Carlo) e não se quer recalcular P e γ a cada dia.
+ * (balanço hídrico diário) e não se quer recalcular P e γ a cada dia.
  * Temperatura média omitida → (Tmax + Tmin) / 2 (FAO-56 Eq. 9).
  */
 export function referenceET0WithGamma(

@@ -4,7 +4,7 @@
 
 Plataforma SaaS agronômica para as grandes culturas do Cerrado brasileiro. Combina análise de solo, reanálise climática (ERA5-Land, com correção de viés por estações) e parâmetros fisiológicos das cultivares para apoiar decisões de calagem e adubação sensíveis ao contexto hídrico real de cada talhão.
 
-A Fase 1 entrega o **Módulo de Software Agrometeorológico (MSA)** — objeto da dissertação de mestrado de Heb Rejane Moreira Pires: balanço hídrico diário (FAO-56), janelas fenológicas por graus-dia, Monte Carlo (P10/P50/P90 do coeficiente de estresse) e cenários de decisão para o técnico agrônomo.
+A Fase 1 entrega o **Módulo de Software Agrometeorológico (MSA)** — objeto da dissertação de mestrado de Heb Rejane Moreira Pires: balanço hídrico diário (FAO-56), janelas fenológicas por graus-dia e predição da produtividade da soja frente à produtividade potencial informada por safra (índice do ciclo FAO-33 por janela fenológica).
 
 ## Como rodar
 
@@ -13,7 +13,7 @@ Pré-requisitos: Docker, Node 20 e pnpm 9 (`corepack enable`).
 ```bash
 cp .env.example .env            # preencha DB_*, REDIS_PASSWORD, JWT_* (≥ 32 caracteres), ADMIN_*
 pnpm start                      # docker compose up -d (db, redis, api, worker, etl, frontend, nginx, adminer)
-pnpm seed                       # usuário ADMIN e cultivares de referência
+pnpm seed                       # usuário ADMIN e cultivar de referência (soja)
 ```
 
 Interface em <http://localhost> (login com `ADMIN_EMAIL`/`ADMIN_PASSWORD`), API em `http://localhost/api/v1`, Adminer em <http://localhost:8080>. Sem `SMTP_HOST`, os links de verificação de e-mail saem no log da API (`pnpm verify-link`).

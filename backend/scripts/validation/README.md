@@ -27,25 +27,8 @@ Lê um CSV com cabeçalho (vírgula, ponto decimal, sem aspas), calcula ET₀ co
 
 Para dados do CLIMWAT/CROPWAT de Goiânia (tabela do Caso 1: T média, UR, u2, Rs), preencha `tmax`/`tmin` com os valores mensais da estação, `rhmean`, `u2`, `rs`, `lat` −16,63, `altitude` 741 e `doy` do dia 15 de cada mês.
 
-## Monte Carlo (Caso 3 — convergência)
+## Balanço hídrico e produtividade (Caso 2 — safra histórica)
 
-```bash
-cd backend
-pnpm msa:validate-mc -- --synthetic 150 --cultivar soja --seed 2026
-pnpm msa:validate-mc -- scripts/validation/examples/synthetic-cerrado-season.csv --cultivar soja
-pnpm msa:validate-mc -- dados/safra.csv --cultivar milho --altitude 500 --soil 0.30,0.14 --seed 7 --out dados/mc.csv
-```
+Não há script próprio: o Caso 2 usa a exportação CSV do painel (série diária) comparada ao CROPWAT 8.0 em planilha, conforme `docs/msa/roteiro-validacao.md` (Fase 2). Quando a safra histórica tem produtividade observada, compare também a `predictedYield` da run com a observada pelo erro relativo `(predita − observada) / observada` — `relativeError()` em `metrics.ts` — e registre o valor no relatório.
 
-Roda `runMonteCarlo` com 100, 500 e 1.000 iterações e **a mesma semente**, e imprime por janela F1–F4 o P50 do Ks médio nas três contagens, a variação relativa |P50₅₀₀ − P50₁₀₀₀| / P50₁₀₀₀ com o critério (< 0,5 %), P10/P90 a 1.000 iterações, o baseline e as iterações válidas; no fim, a redução de produtividade P50 por janela.
-
-| Opção | Padrão | Observação |
-|---|---|---|
-| `<clima.csv>` ou `--synthetic [dias]` | — | CSV com `date, tmax, tmin, [tmean], tdew, u2, rn, precipitation`, ou série sintética determinística (`src/modules/msa/synthetic-season.ts`) |
-| `--cultivar soja\|milho` | obrigatório | cultivar de referência (`src/modules/cultivars/reference-cultivars.ts`) |
-| `--altitude <m>` | 741 | Goiânia |
-| `--soil <fc,wp>` | 0.28,0.12 | Latossolo Vermelho típico |
-| `--seed <n>` | 2026 | semente do PRNG (e da série sintética) |
-| `--out <csv>` | — | grava os números por janela |
-| `--write-weather <csv>` | — | grava a série de clima usada (foi assim que o exemplo foi gerado) |
-
-`examples/synthetic-cerrado-season.csv` é a série sintética de 150 dias com semente 2026 — a mesma do teste automatizado de convergência.
+`examples/synthetic-cerrado-season.csv` é a série sintética de 150 dias (`syntheticSeason(150, 2026)` em `src/modules/msa/synthetic-season.ts`), usada pelos testes de serviço como safra de referência sem dados ERA5-Land.

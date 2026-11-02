@@ -6,7 +6,7 @@ import { FormError, LoadingState } from '@/components/states';
 import { useToast } from '@/components/toast';
 import { Button, FormField, Input, PageHeader, Select, Textarea } from '@/components/ui';
 import { applyFieldErrors, messageFor } from '@/lib/api/errors';
-import { CROP_LABELS } from '@/lib/api/types';
+import { EXPECTED_YIELD_MAX_SC_HA } from '@/lib/api/types';
 import { suggestSeason, todayIso } from '@/lib/msa/msa';
 import { harvestSchema, type HarvestForm } from '@/lib/validation/harvest';
 import { useCultivars } from '../cultivars/api';
@@ -27,7 +27,7 @@ export function HarvestFormPage() {
 
   const { register, handleSubmit, watch, setValue, setError: setFieldError, formState } = useForm<HarvestForm>({
     resolver: zodResolver(harvestSchema),
-    defaultValues: { fieldId: params.get('fieldId') ?? '', cultivarId: '', emergenceDate: '', season: '', notes: '' },
+    defaultValues: { fieldId: params.get('fieldId') ?? '', cultivarId: '', emergenceDate: '', season: '', expectedYield: undefined, notes: '' },
   });
   const errors = formState.errors;
   const emergenceDate = watch('emergenceDate');
@@ -44,7 +44,7 @@ export function HarvestFormPage() {
   const onSubmit = handleSubmit(async (data) => {
     setError(null);
     try {
-      const saved = await create.mutateAsync({ fieldId: data.fieldId, cultivarId: data.cultivarId, emergenceDate: data.emergenceDate, season: data.season, notes: data.notes });
+      const saved = await create.mutateAsync({ fieldId: data.fieldId, cultivarId: data.cultivarId, emergenceDate: data.emergenceDate, season: data.season, expectedYield: data.expectedYield, notes: data.notes });
       toast.success('Safra cadastrada. O MSA foi enfileirado.');
       navigate(`/safras/${saved.id}`, { replace: true, state: { msaJobId: saved.msaJobId ?? null, createdAt: saved.createdAt } });
     } catch (e) {
@@ -90,7 +90,7 @@ export function HarvestFormPage() {
             <optgroup label="Referência">
               {reference.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name} — {CROP_LABELS[c.crop]}
+                  {c.name}
                 </option>
               ))}
             </optgroup>
@@ -98,7 +98,7 @@ export function HarvestFormPage() {
               <optgroup label="Próprias">
                 {mine.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} — {CROP_LABELS[c.crop]}
+                    {c.name}
                   </option>
                 ))}
               </optgroup>
@@ -114,6 +114,15 @@ export function HarvestFormPage() {
             <Input id="season" placeholder="2025/26" invalid={!!errors.season} {...register('season', { onChange: () => setSeasonTouched(true) })} />
           </FormField>
         </div>
+
+        <FormField
+          label="Produtividade potencial (sc/ha)"
+          htmlFor="expectedYield"
+          error={errors.expectedYield?.message}
+          help={`Produtividade esperada sem estresse hídrico (até ${EXPECTED_YIELD_MAX_SC_HA} sc/ha); usada para calcular a produtividade predita. Opcional.`}
+        >
+          <Input id="expectedYield" inputMode="decimal" step="0.1" placeholder="ex.: 65" invalid={!!errors.expectedYield} {...register('expectedYield')} className="max-w-[12rem]" />
+        </FormField>
 
         <FormField label="Notas" htmlFor="notes" error={errors.notes?.message}>
           <Textarea id="notes" invalid={!!errors.notes} {...register('notes')} />

@@ -28,6 +28,8 @@
 - $G = 0$ para passo diário
 
 ### Cultura Soja (plantio direto, Cerrado)
+Soja é a **única cultura** da Fase 1 (enum `Crop` só com `SOJA`; `crop` não é aceito na criação de cultivar). Nova cultivar nasce pré-preenchida da referência tabelada (`GET /cultivars/reference`, `referenceSnapshot`, `POST /cultivars/:id/sync-reference`).
+
 | Parâmetro | Valor |
 |---|---|
 | T_base | 10°C |
@@ -46,16 +48,13 @@
 | F3 — Floração/Enchimento | 450–900 | 1,00 |
 | F4 — Maturação | 900–1.200 | 0,40 |
 
-### Monte Carlo
-- 1.000 iterações por safra/janela
-- Perturbação precipitação: $\pm 30\%$ ($\sigma = 0{,}30$, distribuição normal)
-- Perturbação temperatura: $\pm 0{,}6°C$ ($\sigma = 0{,}6$, distribuição normal)
-- Output: P10 / P50 / P90 do Ks médio por janela
-
-### Cenários de Decisão (escolha do técnico)
-- **(a) Redução de dose:** `Dose_adj = Dose_base × Ks_P50`
-- **(b) Parcelamento:** dividido pela proporção de ETc projetada
-- **(c) Fator de eficiência:** `Eficiência_adj = Eficiência_base × Ks_P50`
+### Predição de produtividade (motor determinístico, `ENGINE_VERSION` 2.0.0)
+- **Ym** (produtividade potencial) informada por safra em sc/ha (`expectedYield`, > 0 e ≤ 250 — `EXPECTED_YIELD_MAX_SC_HA`); a run grava um snapshot; alterar a Ym depois exige reprocessar
+- Redução por janela: $RY_j = Ky_j (1 - \overline{Ks}_j)$ (FAO-33, Eq. 3.2)
+- Índice do ciclo: $Y_a/Y_m = \prod_j [1 - Ky_j (1 - \overline{Ks}_j)]$ sobre as janelas alcançadas; janela não alcançada = fator 1 (`phasesReached` 0–4)
+- Produtividade predita: $Y_a = Y_m \times$ índice (sc/ha); nula sem Ym
+- Sem faixa de incerteza (valor único); sem Monte Carlo, cenários de decisão ou registro de decisão — removidos em 2026-11-02
+- Código: `backend/src/modules/msa/engine/yield.ts` (`cycleYieldIndex`, `predictedYield`); fórmulas em `docs/msa/algoritmos.md` §6
 
 ### Roles do sistema
 - `ADMIN` — acesso total

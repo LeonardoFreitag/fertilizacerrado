@@ -2,7 +2,7 @@ import { Badge, Button } from '@/components/ui';
 import type { DailyRow, HarvestResponse, MsaLatest, PhaseView, RunView } from '@/lib/api/types';
 import { PHASE_LABELS, RUN_REASON_LABELS } from '@/lib/api/types';
 import { downloadCsv, slug, toCsv } from '@/lib/msa/csv';
-import { formatDate, formatDateTime, formatNumber } from '@/lib/msa/msa';
+import { formatDate, formatDateTime, formatNumber, summariesCsv } from '@/lib/msa/msa';
 
 const STATUS_TONE = { SUCCEEDED: 'green', NEEDS_DATA: 'amber', FAILED: 'red' } as const;
 
@@ -26,23 +26,8 @@ export function exportDaily(harvest: HarvestResponse, runId: string, days: Reado
   downloadCsv(`serie-diaria-${slug(`${harvest.field.name}-${harvest.season}`)}-${runId.slice(0, 8)}.csv`, csv);
 }
 
-export function exportSummaries(harvest: HarvestResponse, runId: string, phases: ReadonlyArray<PhaseView>): void {
-  const csv = toCsv(phases, [
-    { header: 'Janela', value: (p) => p.phase },
-    { header: 'Dias', value: (p) => p.days },
-    { header: 'Ks médio', value: (p) => p.ksMean },
-    { header: 'Ks P10', value: (p) => p.percentiles.ksMean?.p10 },
-    { header: 'Ks P50', value: (p) => p.percentiles.ksMean?.p50 },
-    { header: 'Ks P90', value: (p) => p.percentiles.ksMean?.p90 },
-    { header: 'Redução produtividade (%)', value: (p) => p.yieldReductionPct },
-    { header: 'Redução P10 (%)', value: (p) => p.percentiles.yieldReductionPct?.p10 },
-    { header: 'Redução P50 (%)', value: (p) => p.percentiles.yieldReductionPct?.p50 },
-    { header: 'Redução P90 (%)', value: (p) => p.percentiles.yieldReductionPct?.p90 },
-    { header: 'ETc ajustada acumulada (mm)', value: (p) => p.etcAdjAccum },
-    { header: 'Chuva acumulada (mm)', value: (p) => p.precipAccum },
-    { header: 'Iterações válidas', value: (p) => p.validIterations },
-  ]);
-  downloadCsv(`resumos-${slug(`${harvest.field.name}-${harvest.season}`)}-${runId.slice(0, 8)}.csv`, csv);
+export function exportSummaries(harvest: HarvestResponse, run: RunView, phases: ReadonlyArray<PhaseView>): void {
+  downloadCsv(`resumos-${slug(`${harvest.field.name}-${harvest.season}`)}-${run.id.slice(0, 8)}.csv`, summariesCsv(phases, run));
 }
 
 export function MsaHeader({
@@ -89,7 +74,7 @@ export function MsaHeader({
           <Button variant="secondary" size="sm" onClick={() => series && exportDaily(harvest, run.id, series)} disabled={!series}>
             Exportar série diária
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => exportSummaries(harvest, run.id, latest.phases ?? [])}>
+          <Button variant="secondary" size="sm" onClick={() => exportSummaries(harvest, run, latest.phases ?? [])}>
             Exportar resumos
           </Button>
           {canManage && (
@@ -100,7 +85,7 @@ export function MsaHeader({
         </div>
       </div>
 
-      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <dt className="text-xs uppercase tracking-wide text-slate-500">Run</dt>
           <dd className="font-mono text-xs text-slate-700" title={run.id}>
@@ -116,20 +101,17 @@ export function MsaHeader({
           <dd className="text-slate-800">{RUN_REASON_LABELS[run.reason]}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Semente</dt>
-          <dd className="font-mono text-slate-800">{run.seed ?? '—'}</dd>
-        </div>
-        <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Iterações · σP · σT</dt>
-          <dd className="text-slate-800">
-            {run.iterations ?? '—'} · {formatNumber(run.sigmaPrecip)} · {formatNumber(run.sigmaTemp)}
-          </dd>
-        </div>
-        <div>
           <dt className="text-xs uppercase tracking-wide text-slate-500">Motor</dt>
           <dd className="font-mono text-slate-800">v{run.engineVersion}</dd>
         </div>
       </dl>
+
+      {latest.cultivarChangedSinceRun && (
+        <div role="alert" data-testid="cultivar-changed" className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Os parâmetros da cultivar <strong>{harvest.cultivar.name}</strong> mudaram desde esta execução; a run usa o snapshot da época.
+          {canManage ? ' Reprocesse para usar os valores atuais.' : ''}
+        </div>
+      )}
 
       {newerProblem && (
         <div role="alert" className={`mt-4 rounded-md border px-3 py-2 text-sm ${newerProblem.status === 'FAILED' ? 'border-red-300 bg-red-50 text-red-800' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>

@@ -1,5 +1,6 @@
 /** Espelho de backend/src/modules/harvests/dtos. */
 import { z } from 'zod';
+import { EXPECTED_YIELD_MAX_SC_HA } from '../api/types';
 import { todayIso } from '../msa/msa';
 
 export const calendarDateSchema = z
@@ -18,11 +19,22 @@ export const seasonSchema = z
     return (Number(start) + 1) % 100 === Number(end);
   }, 'o segundo ano deve ser o seguinte ao primeiro');
 
+/** Ym em sc/ha: vazio ⇒ undefined; aceita vírgula decimal; > 0 e ≤ teto. */
+export const expectedYieldSchema = z.preprocess(
+  (v) => (v === '' || v === null || v === undefined ? undefined : typeof v === 'string' ? Number(v.replace(',', '.')) : v),
+  z
+    .number({ invalid_type_error: `informe um valor entre 0 e ${EXPECTED_YIELD_MAX_SC_HA}` })
+    .positive(`informe um valor entre 0 e ${EXPECTED_YIELD_MAX_SC_HA}`)
+    .max(EXPECTED_YIELD_MAX_SC_HA, `informe um valor entre 0 e ${EXPECTED_YIELD_MAX_SC_HA}`)
+    .optional(),
+);
+
 export const harvestSchema = z.object({
   fieldId: z.string().uuid('escolha o talhão'),
   cultivarId: z.string().uuid('escolha a cultivar'),
   emergenceDate: calendarDateSchema.refine((v) => v <= todayIso(), 'não pode ser futura'),
   season: seasonSchema,
+  expectedYield: expectedYieldSchema,
   notes: z
     .string()
     .trim()

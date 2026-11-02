@@ -1,6 +1,6 @@
 # Frontend — aplicação web do técnico
 
-Aplicação SPA em `frontend/` que consome a API (`/api/v1`). Idioma pt-BR em toda a interface; desktop como alvo, utilizável no celular. Cobre a Fase 1 inteira: fundação (sessão, layout, infra), **autenticação**, **propriedades/talhões**, **cultivares**, **safras** e o **painel MSA** (janelas, gráficos, cenários e decisões), além da administração das filas.
+Aplicação SPA em `frontend/` que consome a API (`/api/v1`). Idioma pt-BR em toda a interface; desktop como alvo, utilizável no celular. Cobre a Fase 1 inteira: fundação (sessão, layout, infra), **autenticação**, **propriedades/talhões**, **cultivares**, **safras** e o **painel MSA** (produtividade predita, janelas, gráficos, histórico), além da administração das filas.
 
 ## Stack
 
@@ -34,13 +34,13 @@ frontend/
 │   │   ├── auth/         Login, Cadastro, Verifique/Verificar e-mail, Esqueci/Redefinir senha
 │   │   ├── properties/   api.ts (hooks), lista, formulário (+ UserPicker), detalhe
 │   │   ├── fields/       api.ts, MapView, PolygonEditor, FieldForm/Detail/List/Thumbnail, /talhoes
-│   │   ├── cultivars/    api.ts, lista (referência × próprias), formulário por grupos
+│   │   ├── cultivars/    api.ts (+ useReferenceCultivar, useSyncReference), lista (referência × próprias), formulário por grupos pré-preenchido da referência
 │   │   ├── harvests/     api.ts, lista com filtros, formulário, HarvestPage (cabeçalho + MsaPanel)
-│   │   ├── msa/          api.ts, useMsaPolling, MsaPanel, MsaHeader (+ CSV), PhaseTimeline, PhaseCards, MsaCharts, DecisionPanel, RunsTable
+│   │   ├── msa/          api.ts, useMsaPolling, MsaPanel, YieldSummary, MsaHeader (+ CSV), PhaseTimeline, PhaseCards, MsaCharts, RunsTable
 │   │   └── admin/        contagens das filas + ações (ingest-latest, backfill-region, process-all) + jobs da sessão
 │   ├── test/setup.ts
 │   ├── index.css · main.tsx
-├── e2e/                  Playwright: smoke.spec.ts (auth/propriedades/talhões), msa.spec.ts (safra → painel → decisão → CSV; admin)
+├── e2e/                  Playwright: smoke.spec.ts (auth/propriedades/talhões), msa.spec.ts (safra com Ym → painel → bloco Produtividade → CSV; admin)
 ├── Dockerfile            build → nginx:1.25-alpine com os estáticos
 └── vite.config.ts · tailwind.config.ts · playwright.config.ts · eslint.config.js
 ```
@@ -106,19 +106,19 @@ Login responde `{ accessToken, user }` → `session.setSession`; logout chama `P
 
 ## Cultivares e safras
 
-- **Cultivares**: `GET /cultivars` separa **Referência** (`isDefault`; leitura, nota FAO-56/FAO-33) de **Minhas cultivares**. O formulário agrupa os 15 parâmetros (Térmicos, Kc, Hídricos, Ky; `lib/validation/cultivar.ts` replica faixas e relações `gdaF1End < gdaF2End < gdaF3End < gdaTotal`, `zrIni ≤ zrMax`, apontando o campo à direita). A API não expõe "em uso": um 409 `CULTIVAR_IN_USE` no PATCH congela os grupos de parâmetros e oferece reenviar só nome/descrição.
-- **Safras**: lista com filtros status / propriedade → talhão (`?fieldId=` pré-seleciona); criação com talhão agrupado por propriedade, cultivar (referência primeiro), emergência (máx. hoje), safra sugerida por `suggestSeason` (jul–dez ⇒ ano/ano+1; jan–jun ⇒ ano−1/ano) e notas; aviso quando o talhão não tem altitude. Status via PATCH (Concluir/Cancelar/Reativar) com confirmação; sem exclusão.
+- **Cultivares**: só soja — não há campo de cultura (`Crop = 'SOJA'`, `CROP_LABELS` só com soja). `GET /cultivars` separa **Referência** (`isDefault`; leitura, nota FAO-56/FAO-33) de **Minhas cultivares**. O formulário agrupa os 15 parâmetros (Térmicos, Kc, Hídricos, Ky; `lib/validation/cultivar.ts` replica faixas e relações `gdaF1End < gdaF2End < gdaF3End < gdaTotal`, `zrIni ≤ zrMax`, apontando o campo à direita). **Nova cultivar nasce da referência**: `/cultivares/nova` abre pré-preenchida por `GET /cultivars/reference` (`useReferenceCultivar`; campos desabilitados até carregar) e marca, campo a campo, o que diverge da referência atual ("ref. <valor>" + resumo da divergência; também no detalhe e na lista das próprias). Ação **Atualizar a partir da referência** (`useSyncReference` → `POST /cultivars/:id/sync-reference`) com diálogo de dois modos — só os campos nunca alterados (`unchanged`) ou todos (`all`) — lista das alterações e toast com `updatedFields`. Edição de cultivar em uso é permitida: o formulário mostra a nota "Runs já calculadas guardam os parâmetros da época; as próximas usam os novos valores" (não há mais 409 `CULTIVAR_IN_USE` no PATCH nem tela de parâmetros congelados).
+- **Safras**: lista com filtros status / propriedade → talhão (`?fieldId=` pré-seleciona); criação com talhão agrupado por propriedade, cultivar (referência primeiro), emergência (máx. hoje), safra sugerida por `suggestSeason` (jul–dez ⇒ ano/ano+1; jan–jun ⇒ ano−1/ano), **Produtividade potencial (sc/ha)** (opcional; `> 0` e `≤ EXPECTED_YIELD_MAX_SC_HA` = 250, constante em `lib/api/types.ts`, mensagem "informe um valor entre 0 e 250") e notas; aviso quando o talhão não tem altitude. No detalhe, a Ym é editável via PATCH junto das notas, com a dica de reprocessar (a run guarda a Ym da época). A lista mostra a Ym e, via `useMsaLatest` (o mesmo hook do `MsaBadge`), a produtividade predita (ou o índice em %) ao lado do selo de severidade. Status via PATCH (Concluir/Cancelar/Reativar) com confirmação; sem exclusão.
 - **Acompanhamento**: após criar (ou ao clicar em Reprocessar), `useMsaPolling(harvestId, since)` consulta `GET /msa/runs` a cada 3 s até aparecer uma run iniciada após `since` (qualquer status) ou 10 min; ADMIN vê também o estado do job (`GET /admin/jobs/msa-process/:id`). Ao concluir, invalida as consultas do MSA.
 
 ## Painel MSA (`/safras/:id`)
 
-- **Cabeçalho**: intervalo, janela atual, status, run (id, data, origem, semente, iterações/σ, `engineVersion`), **selo da chuva** ("Chuva corrigida — estação X (código, N anos, D km)" a partir de `run.qmCalibration`, ou "Chuva sem correção (ERA5-Land bruto)"), Reprocessar (202 + polling), exportação CSV; aviso quando a tentativa mais recente é `NEEDS_DATA`/`FAILED` (o painel mostra a última `SUCCEEDED`).
+- **Produtividade** (`YieldSummary.tsx`, no topo do painel, também ao ver run antiga): Ym da run, tabela por janela (Ks̄ e redução Ky·(1−Ks̄) em %), índice do ciclo, **produtividade predita em sc/ha** em destaque e "N de 4 janelas"; aviso "considera o restante do ciclo sem estresse" enquanto `phasesReached < 4` ou `currentPhase !== 'COMPLETED'`; sem Ym, mostra o índice e um link para editar a safra (AGRONOMO/ADMIN) ou "produtividade potencial não informada" (PRODUTOR); avisa quando a Ym atual da safra difere da Ym da run (reprocessar). Linhas calculadas por `yieldSummaryRows()` em `lib/msa` (testada).
+- **Cabeçalho**: intervalo, janela atual, status, run (id, data, origem, `engineVersion`), aviso **"parâmetros da cultivar mudaram desde esta run"** (`cultivarChangedSinceRun`), **selo da chuva** ("Chuva corrigida — estação X (código, N anos, D km)" a partir de `run.qmCalibration`, ou "Chuva sem correção (ERA5-Land bruto)"), Reprocessar (202 + polling), exportação CSV; aviso quando a tentativa mais recente é `NEEDS_DATA`/`FAILED` (o painel mostra a última `SUCCEEDED`).
 - **Linha do tempo** (`phaseRanges`): barras proporcionais aos dias de cada janela presentes na série, datas, marcador "hoje", janelas não alcançadas tracejadas.
-- **Cartões** (`severity`): Ks médio, percentis P10/P50/P90, redução de produtividade, ETc_adj e chuva acumuladas, dias/iterações; cor + rótulo: ok ≥ 0,85, atenção 0,70–0,85, crítico < 0,70, cinza quando não alcançada.
+- **Cartões** (`severity`): Ks médio, redução de produtividade, ETc_adj e chuva acumuladas, dias; cor + rótulo: ok ≥ 0,85, atenção 0,70–0,85, crítico < 0,70, cinza quando não alcançada.
 - **Gráficos** (Recharts): chuva (barras) + ETc/ETc_adj (linhas) com fundo por janela; Dr × RAW × TAW; Ks com referências 0,85/0,70. Tooltip com todos os campos do dia.
-- **Cenários**: janela, dose base e eficiência base (debounce 400 ms) → `GET /msa/decision` → A/B/C com racional; B indisponível mostra `bUnavailableReason`; "Registrar decisão X" abre justificativa obrigatória → `POST /msa/decisions` com `runId`. Lista de decisões abaixo. PRODUTOR vê sem botões.
-- **Histórico de runs**: tabela; "Ver série" troca a série dos gráficos/linha do tempo para uma run antiga (`?runId=`) com aviso e retorno.
-- **CSV** (`lib/msa/csv.ts`): `;`, vírgula decimal, BOM UTF-8; `serie-diaria-<talhao-safra>-<run>.csv` e `resumos-…csv`.
+- **Histórico de runs**: tabela (sem semente; com índice e predita); "Ver série" troca a série dos gráficos/linha do tempo para uma run antiga (`?runId=`) com aviso e retorno.
+- **CSV** (`lib/msa/csv.ts`): `;`, vírgula decimal, BOM UTF-8; `serie-diaria-<talhao-safra>-<run>.csv` e `resumos-…csv` com colunas `janela;dias;ks_medio;reducao_pct;etc_adj_mm;chuva_mm;indice_ciclo;ym_sc_ha;predita_sc_ha` (as três últimas repetidas em todas as linhas, vazias quando a run não tem Ym; sem percentis). Não há painel de decisão nem CSV de decisões.
 
 ## Administração (`/admin`)
 

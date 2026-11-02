@@ -1,0 +1,63 @@
+## 1. Motor determinístico (`backend/src/modules/msa/engine`)
+
+- [x] 1.1 Mover `mulberry32`, `uniform` e `sampleNormal` para `src/modules/msa/synthetic-season.ts` (mantendo a semente 2026 e a saída idêntica a `examples/synthetic-cerrado-season.csv`); `engine/test-fixtures.ts` passa a reexportá-los de lá; remover `engine/random.ts` e `random.test.ts`
+- [x] 1.2 Remover `engine/monte-carlo.ts`, `monte-carlo.test.ts`, `engine/decision.ts`, `decision.test.ts` e, em `types.ts`, `MonteCarloOptions`, `MonteCarloResult`, `Percentiles`, `PhasePercentiles`, `DecisionInput`, `ScenarioA/B/C`, `DecisionScenarios`; `index.ts` deixa de exportá-los e passa `ENGINE_VERSION` a `2.0.0`
+- [x] 1.3 `types.ts`: tipo `CycleYield { yieldIndex, phasesReached, factors }`; `yield.ts`: `cycleYieldIndex(summaries)` (Π de `1 − yieldReductionPct/100` nas janelas com dias; janela sem dias = 1; `phasesReached` = janelas com dias) e `predictedYield(ym, yieldIndex)` com `RangeError` para `ym ≤ 0`/não finito ou índice fora de [0, 1]; JSDoc citando FAO-33 e `algoritmos.md` §6
+- [x] 1.4 `yield.test.ts`: cenários da spec (índice 1; F3 0,70/Ky 1,0 → 0,70; F2 0,90/0,8 + F3 0,80/1,0 → 0,736; janela não alcançada → fator 1 e `phasesReached` 2; `predictedYield(65, 0.736)` → 47,84; entradas inválidas; `ENGINE_VERSION === '2.0.0'`); `invariants.test.ts` ganha `0 ≤ yieldIndex ≤ 1` e um teste de que `engine/index.ts` não exporta PRNG, `runMonteCarlo`, `percentile` nem `generateDecisionScenarios`
+
+## 2. Schema, migration e seed
+
+- [x] 2.1 `prisma/schema.prisma`: `Crop` só `SOJA`; `Cultivar.referenceSnapshot Json? @map("reference_snapshot")`; `Harvest.expectedYield Float? @map("expected_yield")` e remoção de `msaDecisions`; `MsaRun` sem `seed/iterations/sigmaPrecip/sigmaTemp/decisions` e com `expectedYield`, `yieldIndex`, `predictedYield`, `phasesReached` (todos opcionais); `MsaPhaseSummary` sem `validIterations` e sem as nove colunas `*P10/P50/P90`; remover `MsaDecision` e `MsaScenario`; `User` sem a relação de decisões
+- [x] 2.2 Migration SQL manual `refocus_yield_prediction` na ordem do design (Decisão 6): `DELETE FROM msa_runs`; `DROP TABLE msa_decisions`; `DROP TYPE msa_scenario`; colunas de `msa_runs` e `msa_phase_summaries`; `harvests.expected_yield`; `cultivars.reference_snapshot` com backfill das cultivares próprias pelos valores atuais da referência de soja; `DELETE` de cultivares `MILHO` sem safras + `RAISE EXCEPTION` se restar `MILHO` em uso; recriação do enum `crop` só com `SOJA`
+- [x] 2.3 `reference-cultivars.ts` só com a soja (`referenceCultivar('SOJA')`); `prisma/seed.ts` cria/atualiza uma referência com `referenceSnapshot` nulo; rodar `pnpm prisma migrate dev` num banco com a referência de milho e conferir que ela some e que o enum fica só com `SOJA`; testar o caso "milho em uso" (criar safra com milho antes de migrar) e conferir a falha com mensagem
+
+## 3. Safras (`backend/src/modules/harvests`)
+
+- [x] 3.1 `create-harvest.dto.ts` e `update-harvest.dto.ts`: `expectedYield` (número finito `> 0` e `≤ EXPECTED_YIELD_MAX_SC_HA`, constante exportada pelo DTO com valor 250; `null` permitido no PATCH); `harvest.service.ts`/`repository`: gravar e devolver `expectedYield` em todas as respostas; `harvest.dto.test.ts` com os casos 0, −10, 250 (aceito), 300, "alta" e null
+- [x] 3.2 `scripts/e2e/e2e-cultivars-harvests.sh`: criação com `expectedYield 65`, sem Ym, inválida (400), PATCH com 65 e com null
+
+## 4. Cultivares (`backend/src/modules/cultivars`)
+
+- [x] 4.1 DTOs: `create-cultivar.dto.ts` rejeita `crop` (`forbiddenField`) e remove `CROPS`/`listCultivarsQuerySchema.crop`; `update-cultivar.dto.ts` mantém `crop` proibido; novo `sync-reference.dto.ts` (`mode: "unchanged" | "all"`); atualizar `cultivar-params.schema.test.ts`
+- [x] 4.2 `cultivar.service.ts`: `create` grava `crop SOJA` e `referenceSnapshot` com os 15 parâmetros da referência do banco; `update` deixa de bloquear parâmetros em uso (manter validação do estado resultante; `countHarvests` só no `delete`); `getReference()` (404 `REFERENCE_CULTIVAR_MISSING`); `syncReference(user, id, mode)` conforme a spec, devolvendo `{ cultivar, updatedFields }`; `list` sem filtro de cultura
+- [x] 4.3 `cultivar.routes.ts`/`controller`: `GET /reference` antes de `GET /:id`; `POST /:id/sync-reference` com `manage`; testes de serviço para create (snapshot), update em uso (200), sync `unchanged`/`all`/sem mudanças/referência (403)
+- [x] 4.4 `scripts/e2e/e2e-cultivars-harvests.sh`: referência única de soja, `GET /cultivars/reference`, `crop` no POST → 400, PATCH de parâmetro em cultivar com safra → 200, sync nos dois modos, `?crop=` ignorado
+
+## 5. Processamento (`backend/src/modules/msa`)
+
+- [x] 5.1 `msa.service.ts`: `runProcessing` chama `runDailyBalance` + `summarizeByPhase` + `cycleYieldIndex` uma vez, grava `expectedYield` (snapshot da safra), `yieldIndex`, `phasesReached`, `predictedYield` (nulo sem Ym); remover `ITERATIONS`, `MAX_SEED`, `randomInt`, `ProcessOptions.seed`, campos de MC em `RunView`/`toRunView`, percentis e `validIterations` em `PhaseView`/`toPhaseView`/`summaryRows`; `harvestForProcessingSelect` passa a trazer `expectedYield`
+- [x] 5.2 `getLatest` devolve `cultivarChangedSinceRun` por função pura `cultivarChangedSinceRun(snapshot, current)` que itera sobre as chaves de `CultivarParams` presentes no snapshot (sem lista fixa de 15 nomes, para que `tUpper` entre na próxima change sem edição), com teste incluindo uma chave extra no snapshot; remover `decisionScenarios`, `recordDecision`, `listDecisions`, `createDecision`, `listDecisions` do repositório, `decisionQuerySchema`, `recordDecisionSchema`, `processQuerySchema.seed`; rotas `/decision` e `/decisions` e handlers do controller removidos
+- [x] 5.3 Worker/orquestração: remover `seed` do payload do job `msa-process` e de qualquer chamada (`processHarvestAsSystem`, semanal, backfill, "processar todas as safras ativas"); conferir `docs/modulos/msa.md` e `msa-orchestration` para referências à semente
+- [x] 5.4 `msa.service.test.ts`: substituir os testes de semente/decisão por: run `SUCCEEDED` com índice, `phasesReached` e predita; sem Ym → predita nula; Ym alterada depois não muda a run; reprodutibilidade sem semente; `cultivarChangedSinceRun` falso/verdadeiro; `seed` na query → 400
+- [x] 5.5 `scripts/e2e/e2e-msa.sh`: remover `TRUNCATE msa_decisions`, `?seed=`, checagens de semente/iterações/sigmas e todo o bloco de decisões; adicionar `expectedYield` na safra, checagens de `yieldIndex`, `predictedYield`, `phasesReached`, `engineVersion 2.0.0`, ausência de `percentiles`, `cultivarChangedSinceRun` após PATCH da cultivar e 404 nas rotas de decisão
+
+## 6. Validação (`backend/scripts/validation`, `package.json`)
+
+- [x] 6.1 Remover `mc-validate.ts` e o script `msa:validate-mc`; `metrics.ts` ganha `relativeError` com teste em `metrics.test.ts`; `README.md` da pasta sem a seção Monte Carlo e com a nota do erro relativo no Caso 2
+- [x] 6.2 `docs/msa/validacao.md`: Caso 3 removido, Caso 2 com a comparação predita × observada (erro relativo), cronograma atualizado; `docs/msa/roteiro-validacao.md`: Fase 3 removida, Fase 2 com o passo da produtividade; `backend` typecheck, lint e `pnpm test` verdes
+
+## 7. Frontend — tipos, safras e cultivares
+
+- [x] 7.1 `lib/api/types.ts`: `Crop = 'SOJA'`, `CROP_LABELS` só soja, `CultivarResponse.referenceSnapshot`, `CultivarPayload` sem `crop`, `SyncReferenceResponse`; `HarvestResponse/HarvestPayload.expectedYield`; `PhaseView` sem `percentiles`/`validIterations`; `RunView` sem `seed/iterations/sigma*` e com `expectedYield/yieldIndex/predictedYield/phasesReached`; `MsaLatest.cultivarChangedSinceRun`; remover `Percentiles`, `Scenario*`, `DecisionScenarios*`, `DecisionView`, `RecordDecisionPayload`
+- [x] 7.2 `features/harvests`: campo "Produtividade potencial (sc/ha)" no `HarvestFormPage` (opcional, validação local `> 0` e `≤ EXPECTED_YIELD_MAX_SC_HA` = 250, constante nomeada em `lib/api/types.ts`, mensagem "informe um valor entre 0 e 250", ajuda); edição da Ym no `HarvestPage` com a dica de reprocessar; `HarvestsPage` mostra Ym e, via `useMsaLatest`, predita (ou índice %) ao lado do selo de severidade
+- [x] 7.3 `features/cultivars`: `api.ts` com `useReferenceCultivar` e `useSyncReference`; `CultivarFormPage` sem campo de cultura, pré-preenchido pela referência em `/cultivares/nova` (desabilitado até carregar), marcação de divergência campo a campo com "ref. <valor>" e resumo, nota de edição em uso, ação "Atualizar a partir da referência" com diálogo (dois modos, lista de alterações, toast com `updatedFields`); remover o tratamento de 409 no PATCH e o aviso de congelamento; `CultivarsPage` sem cultura, com o resumo de divergência nas próprias; funções puras de divergência testadas
+
+## 8. Frontend — painel MSA
+
+- [x] 8.1 Remover `DecisionPanel.tsx`, `useDecisionScenarios`, `useDecisions`, `useRecordDecision` e `msaKeys.decisions`; `PhaseCards` sem percentis/iterações; `MsaHeader` sem semente e com o aviso de cultivar alterada (`cultivarChangedSinceRun`); `RunsTable` sem semente e com índice/predita; `lib/msa/msa.ts` sem `formatPercentiles`
+- [x] 8.2 Novo `YieldSummary.tsx` (bloco Produtividade acima da linha do tempo): Ym da run, tabela por janela (Ks̄, redução %), índice, predita em destaque, "N de 4 janelas", aviso de predição parcial (`phasesReached < 4` ou `currentPhase !== 'COMPLETED'`), estado sem Ym (índice + link para o detalhe da safra para quem pode), aviso de Ym da safra diferente da run; função pura `yieldSummaryRows()` em `lib/msa` com testes; `MsaPanel` monta o bloco também ao visualizar run antiga
+- [x] 8.3 CSV de resumos sem percentis, com as três colunas `indice_ciclo;ym_sc_ha;predita_sc_ha` repetidas em todas as linhas (vazias quando a run não tem Ym), sem linha final de formato diferente; `msa.test.ts` cobre run com Ym e run sem Ym; `pnpm typecheck`, `pnpm lint`, `pnpm test` no frontend
+- [x] 8.4 e2e `msa.spec.ts`: substituir o trecho cenários → decisão por Ym na criação → bloco Produtividade com predita → PATCH de Ym → aviso de reprocessar → CSV sem percentis; `pnpm e2e` verde com a stack no ar
+
+## 9. Documentação, manual e dissertação
+
+- [x] 9.1 `docs/msa/algoritmos.md`: §6 com a combinação multiplicativa do ciclo, `phasesReached`, predição `Ya = Ym × índice`, limitação (sem faixa de incerteza) e rastreabilidade para `yield.ts`; §7 e §8 removidos; glossário atualizado
+- [x] 9.2 `docs/arquitetura.md` (tabela da Fase 1, fluxo de dados sem Monte Carlo, "Conceito Operacional" como predição retrospectiva de produtividade por janelas), `CLAUDE.md` (sem Monte Carlo/cenários; só soja; Ym por safra; `ENGINE_VERSION` 2.0.0), `docs/modulos/msa.md` (§1 cultivares com referência/sync e edição em uso, §2 safras com Ym, §3 motor com índice/predita, §4 e "Cenários de Decisão" removidos, endpoints), `docs/modulos/frontend.md` (painel e cultivares), `README.md` da raiz se citar Monte Carlo
+- [x] 9.3 `docs/msa/questoes-abertas.md`: #1 removida (superada), #5 marcada como decidida com a justificativa do snapshot, registro da decisão da reunião com o professor Adilson (data, decisão, consequências) na seção final
+- [x] 9.4 Manual: cap. 04 (nova cultivar pré-preenchida, divergência, atualizar a partir da referência, edição em uso; remover "parâmetros bloqueados"), cap. 05 (Produtividade potencial), cap. 06 (seção "Produtividade" no lugar de cenários/decisões; cartões sem percentis; cabeçalho sem semente), cap. 08 (FAQ e glossário sem Monte Carlo/percentis; com Ym, índice do ciclo, produtividade predita); `frontend/e2e/manual/capture.spec.ts` com `04-05-divergencia-da-referencia.png` e `06-11-produtividade.png`, sem 06-12 a 06-17, `captura.json` com Ym/índice/predita; `pnpm manual:capture` e `pnpm manual:pdf` rodados e imagens revisadas
+- [x] 9.5 `docs/dissertacao/mapa-objetivos-evidencias.md`: OE5 marcado como substituído pela predição de produtividade (evidências: índice por janela de um talhão real, predita × observada), pendências 6 e 7 reescritas; anotar que a redação final depende da pesquisadora e do orientador (confirmar antes do archive)
+
+## 10. Verificação final e operação
+
+- [x] 10.1 Backend e frontend: typecheck, lint, testes unitários e e2e shell/Playwright verdes; `grep -ri "monte carlo\|P50\|decision\|MILHO\|seed" backend/src frontend/src docs` sem ocorrências remanescentes indevidas (exceto histórico em `openspec/changes/archive`)
+- [x] 10.2 Subir a stack, aplicar a migration, rodar o seed e "Processar todas as safras ativas" em `/admin`; conferir no painel uma safra com Ym (predita) e uma sem (índice + link); registrar o procedimento pós-deploy no README de operação

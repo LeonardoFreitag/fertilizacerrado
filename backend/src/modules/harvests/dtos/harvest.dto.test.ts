@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calendarDateSchema, createHarvestSchema, seasonSchema } from './create-harvest.dto';
+import { calendarDateSchema, createHarvestSchema, EXPECTED_YIELD_MAX_SC_HA, seasonSchema } from './create-harvest.dto';
 import { updateHarvestSchema } from './update-harvest.dto';
 
 const UUID = '7b0c1f1e-6f0b-4c36-9f65-0d2f0c6f3a11';
@@ -37,6 +37,17 @@ describe('createHarvestSchema', () => {
     expect(createHarvestSchema.parse({ ...valid, notes: 'Plantio direto' }).notes).toBe('Plantio direto');
   });
 
+  it('aceita expectedYield em (0, teto] e rejeita 0, negativo, acima do teto e texto', () => {
+    expect(createHarvestSchema.parse({ ...valid, expectedYield: 65 }).expectedYield).toBe(65);
+    expect(createHarvestSchema.parse({ ...valid, expectedYield: EXPECTED_YIELD_MAX_SC_HA }).expectedYield).toBe(250);
+    expect(createHarvestSchema.parse(valid).expectedYield).toBeUndefined();
+    for (const bad of [0, -10, 300, 'alta', null]) {
+      const result = createHarvestSchema.safeParse({ ...valid, expectedYield: bad });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(Object.keys(result.error.flatten().fieldErrors)).toEqual(['expectedYield']);
+    }
+  });
+
   it('exige fieldId e cultivarId como UUID', () => {
     const result = createHarvestSchema.safeParse({ ...valid, fieldId: '1', cultivarId: 'x' });
     expect(result.success).toBe(false);
@@ -50,6 +61,16 @@ describe('updateHarvestSchema', () => {
   it('aceita status, notes (anulável) e season', () => {
     expect(updateHarvestSchema.parse({ status: 'COMPLETED' })).toEqual({ status: 'COMPLETED' });
     expect(updateHarvestSchema.parse({ notes: null, season: '2026/27' })).toEqual({ notes: null, season: '2026/27' });
+  });
+
+  it('aceita expectedYield e null para limpar; rejeita inválidos', () => {
+    expect(updateHarvestSchema.parse({ expectedYield: 65 })).toEqual({ expectedYield: 65 });
+    expect(updateHarvestSchema.parse({ expectedYield: null })).toEqual({ expectedYield: null });
+    for (const bad of [0, -5, 300, 'alta']) {
+      const result = updateHarvestSchema.safeParse({ expectedYield: bad });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(Object.keys(result.error.flatten().fieldErrors)).toEqual(['expectedYield']);
+    }
   });
 
   it('rejeita corpo vazio e status desconhecido', () => {

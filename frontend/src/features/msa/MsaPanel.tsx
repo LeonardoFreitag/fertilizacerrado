@@ -8,12 +8,12 @@ import { messageFor } from '@/lib/api/errors';
 import type { HarvestResponse, RunView } from '@/lib/api/types';
 import { useSession } from '@/lib/auth/session';
 import { formatDate, formatDateTime } from '@/lib/msa/msa';
-import { DecisionPanel } from './DecisionPanel';
 import { MsaCharts } from './MsaCharts';
 import { MsaHeader } from './MsaHeader';
 import { PhaseCards } from './PhaseCards';
 import { PhaseTimeline } from './PhaseTimeline';
 import { RunsTable } from './RunsTable';
+import { YieldSummary } from './YieldSummary';
 import { useDailySeries, useJob, useMsaLatest, useMsaRuns, useProcessHarvest } from './api';
 import { useMsaPolling } from './useMsaPolling';
 
@@ -118,6 +118,17 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
           <ErrorBoundary title="Cabeçalho do MSA indisponível.">
           <MsaHeader latest={latest.data} harvest={harvest} canManage={canManage} onReprocess={reprocess} reprocessing={process.isPending || (!!watch && polling.state === 'waiting')} lastRun={lastRun} series={daily.data?.days} />
           </ErrorBoundary>
+          {selectedRun && (
+            <ErrorBoundary title="Produtividade indisponível.">
+              <YieldSummary
+                run={selectedRun}
+                phases={selectedRunId && selectedRunId !== latest.data.run.id ? null : latest.data.phases ?? []}
+                currentPhase={selectedRunId && selectedRunId !== latest.data.run.id ? (daily.data?.days.at(-1)?.phase ?? null) : latest.data.currentPhase}
+                harvest={harvest}
+                canManage={canManage}
+              />
+            </ErrorBoundary>
+          )}
           {daily.data && (
             <ErrorBoundary title="Linha do tempo indisponível.">
               <PhaseTimeline days={daily.data.days} currentPhase={latest.data.currentPhase} />
@@ -136,9 +147,6 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
               />
             </ErrorBoundary>
           )}
-          <ErrorBoundary title="Cenários indisponíveis.">
-            <DecisionPanel harvest={harvest} latest={latest.data} runId={viewingRunId} canManage={canManage} />
-          </ErrorBoundary>
           {runs.data && (
             <ErrorBoundary title="Histórico indisponível.">
               <RunsTable runs={runs.data} selectedRunId={viewingRunId ?? null} latestRunId={latest.data.run.id} onSelect={(id) => setSelectedRunId(id)} />

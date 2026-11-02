@@ -55,6 +55,16 @@ export function computeMetrics(simulated: readonly number[], observed: readonly 
   return { n, rmse, r2, nse, pbias };
 }
 
+/**
+ * Erro relativo da produtividade predita (Caso 2 do protocolo): (predita −
+ * observada) / observada, em fração (−0,08 = 8 % abaixo do observado).
+ */
+export function relativeError(predicted: number, observed: number): number {
+  if (!Number.isFinite(observed) || observed <= 0) throw new RangeError(`observado deve ser finito e > 0: ${observed}`);
+  if (!Number.isFinite(predicted)) throw new RangeError(`predito deve ser finito: ${predicted}`);
+  return (predicted - observed) / observed;
+}
+
 export function meetsCriteria(m: ValidationMetrics) {
   return {
     rmse: m.rmse <= ET0_CRITERIA.rmse,

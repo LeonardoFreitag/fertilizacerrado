@@ -1,12 +1,17 @@
-import type { Crop, Cultivar, Prisma } from '@prisma/client';
+import type { Cultivar, Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 
 export const cultivarRepository = {
-  list(filter: Prisma.CultivarWhereInput, crop?: Crop): Promise<Cultivar[]> {
+  list(filter: Prisma.CultivarWhereInput): Promise<Cultivar[]> {
     return prisma.cultivar.findMany({
-      where: { ...filter, ...(crop ? { crop } : {}) },
-      orderBy: [{ isDefault: 'desc' }, { crop: 'asc' }, { name: 'asc' }],
+      where: filter,
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
     });
+  },
+
+  /** Cultivar de referência de soja (seed), ou null se o seed não rodou. */
+  findReference(): Promise<Cultivar | null> {
+    return prisma.cultivar.findFirst({ where: { isDefault: true, crop: 'SOJA' }, orderBy: { createdAt: 'asc' } });
   },
 
   findOne(id: string, filter: Prisma.CultivarWhereInput): Promise<Cultivar | null> {

@@ -1,5 +1,6 @@
-/** Funções puras do painel MSA: severidade, faixas fenológicas, formatação, safra sugerida. */
-import type { DailyRow, Percentiles, Phase, YieldPhase } from '../api/types';
+/** Funções puras do painel MSA: severidade, faixas fenológicas, produtividade, formatação, safra sugerida. */
+import type { DailyRow, Phase, PhaseView, RunView, YieldPhase } from '../api/types';
+import { toCsv } from './csv';
 
 /**
  * Limiares de severidade do Ks médio da janela (fluxo operacional de docs/modulos/msa.md:
@@ -78,11 +79,6 @@ export function formatNumber(value: number | null | undefined, digits = 2): stri
   return value == null || Number.isNaN(value) ? '—' : num(digits).format(value);
 }
 
-export function formatPercentiles(p: Percentiles | null | undefined, digits = 2): string {
-  if (!p) return '—';
-  return `P10 ${formatNumber(p.p10, digits)} · P50 ${formatNumber(p.p50, digits)} · P90 ${formatNumber(p.p90, digits)}`;
-}
-
 export function formatPct(value: number | null | undefined, digits = 1): string {
   return value == null || Number.isNaN(value) ? '—' : `${num(digits).format(value)}%`;
 }
@@ -128,4 +124,75 @@ export function suggestSeason(emergenceDate: string): string {
 
 export function phaseLabelShort(phase: Phase): string {
   return phase === 'COMPLETED' ? 'Fim' : phase;
+}
+
+// --- produtividade (FAO-33, combinação multiplicativa; docs/msa/algoritmos.md §6) ------------
+
+export interface YieldSummaryRow {
+  phase: YieldPhase;
+  reached: boolean;
+  days: number;
+  ksMean: number | null;
+  /** Ky · (1 − Ks̄) em % */
+  reductionPct: number | null;
+  /** 1 − redução/100; 1 quando não alcançada */
+  factor: number;
+}
+
+/** Uma linha por janela F1–F4, na ordem, com o fator que entra no índice do ciclo. */
+export function yieldSummaryRows(phases: ReadonlyArray<PhaseView>): YieldSummaryRow[] {
+  return YIELD.map((phase) => {
+    const p = phases.find((x) => x.phase === phase);
+    const reached = !!p && p.days > 0 && p.ksMean != null;
+    const reductionPct = reached ? p!.yieldReductionPct : null;
+    return {
+      phase,
+      reached,
+      days: p?.days ?? 0,
+      ksMean: reached ? p!.ksMean : null,
+      reductionPct,
+      factor: reductionPct == null ? 1 : Math.min(1, Math.max(0, 1 - reductionPct / 100)),
+    };
+  });
+}
+
+export interface YieldWarnings {
+  /** Ciclo incompleto: a predição considera o restante do ciclo sem estresse */
+  partial: boolean;
+  /** A Ym atual da safra difere da Ym usada na run */
+  ymChanged: boolean;
+}
+
+export function yieldWarnings(input: { phasesReached: number | null; currentPhase: Phase | null; runYm: number | null; harvestYm: number | null }): YieldWarnings {
+  const partial = (input.phasesReached ?? 0) < 4 || input.currentPhase !== 'COMPLETED';
+  const ymChanged = input.harvestYm != null && input.runYm != null ? input.harvestYm !== input.runYm : input.harvestYm != null && input.runYm == null;
+  return { partial, ymChanged };
+}
+
+/** Índice do ciclo em % com uma casa ("73,6 %"). */
+export function formatIndexPct(index: number | null | undefined): string {
+  return index == null || Number.isNaN(index) ? '—' : `${num(1).format(index * 100)} %`;
+}
+
+/** Produtividade em sc/ha com uma casa ("47,8 sc/ha"). */
+export function formatScHa(value: number | null | undefined): string {
+  return value == null || Number.isNaN(value) ? '—' : `${num(1).format(value)} sc/ha`;
+}
+
+/**
+ * CSV de resumos: uma linha por janela; índice, Ym e predita repetidos em todas as
+ * linhas (vazios quando a run não tem Ym). Sem percentis nem linha final.
+ */
+export function summariesCsv(phases: ReadonlyArray<PhaseView>, run: Pick<RunView, 'yieldIndex' | 'expectedYield' | 'predictedYield'>): string {
+  return toCsv(phases, [
+    { header: 'janela', value: (p) => p.phase },
+    { header: 'dias', value: (p) => p.days },
+    { header: 'ks_medio', value: (p) => p.ksMean },
+    { header: 'reducao_pct', value: (p) => p.yieldReductionPct },
+    { header: 'etc_adj_mm', value: (p) => p.etcAdjAccum },
+    { header: 'chuva_mm', value: (p) => p.precipAccum },
+    { header: 'indice_ciclo', value: () => run.yieldIndex },
+    { header: 'ym_sc_ha', value: () => run.expectedYield },
+    { header: 'predita_sc_ha', value: () => run.predictedYield },
+  ]);
 }

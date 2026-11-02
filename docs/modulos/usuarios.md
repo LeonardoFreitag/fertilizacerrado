@@ -4,7 +4,7 @@ Completa a Fase 0: administração das contas (`ADMIN`), perfil próprio e reenv
 
 ## Regras
 
-- **Ativo/inativo** (`users.active`, default verdadeiro): desativar **não apaga nada** — propriedades, safras, runs e decisões continuam referenciando o usuário. Um inativo recebe 403 `USER_INACTIVE` no login, 401 no `refresh` e em `GET /auth/me`; o refresh token é zerado no ato. O access token já emitido (15 min) continua válido até expirar — o `authenticate` não consulta o banco a cada requisição (limitação conhecida, aceita pelo custo).
+- **Ativo/inativo** (`users.active`, default verdadeiro): desativar **não apaga nada** — propriedades, safras e runs continuam referenciando o usuário. Um inativo recebe 403 `USER_INACTIVE` no login, 401 no `refresh` e em `GET /auth/me`; o refresh token é zerado no ato. O access token já emitido (15 min) continua válido até expirar — o `authenticate` não consulta o banco a cada requisição (limitação conhecida, aceita pelo custo).
 - **Último administrador**: um `ADMIN` não desativa nem rebaixa a si mesmo; desativar ou rebaixar o último `ADMIN` ativo responde 409 `LAST_ADMIN`. A verificação roda em transação com `SELECT … FOR UPDATE` dos admins.
 - **Autoedição**: o próprio usuário altera `name`, `phone` e `crea`; qualquer outro campo ⇒ 403 `FORBIDDEN_FIELDS`. `email`, `cpf` e `cnpj` são imutáveis. Só `ADMIN` altera `role` e `active`.
 - **Documentos** aparecem mascarados nas listagens (`***.982.247-**`).

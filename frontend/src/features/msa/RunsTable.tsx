@@ -1,7 +1,7 @@
 import { Badge, Button } from '@/components/ui';
 import type { RunView } from '@/lib/api/types';
 import { RUN_REASON_LABELS } from '@/lib/api/types';
-import { formatDate, formatDateTime } from '@/lib/msa/msa';
+import { formatDate, formatDateTime, formatIndexPct, formatScHa } from '@/lib/msa/msa';
 
 const TONE = { SUCCEEDED: 'green', NEEDS_DATA: 'amber', FAILED: 'red' } as const;
 
@@ -19,7 +19,7 @@ export function RunsTable({ runs, selectedRunId, latestRunId, onSelect }: { runs
             <th className="px-4 py-2">Status</th>
             <th className="px-4 py-2">Origem</th>
             <th className="px-4 py-2">Intervalo</th>
-            <th className="px-4 py-2">Semente</th>
+            <th className="px-4 py-2">Índice · predita</th>
             <th className="px-4 py-2">Motor</th>
             <th className="px-4 py-2"></th>
           </tr>
@@ -39,7 +39,9 @@ export function RunsTable({ runs, selectedRunId, latestRunId, onSelect }: { runs
                 <td className="px-4 py-2 text-slate-700">
                   {formatDate(r.dateFrom)} – {formatDate(r.dateTo)}
                 </td>
-                <td className="px-4 py-2 font-mono text-xs text-slate-700">{r.seed ?? '—'}</td>
+                <td className="px-4 py-2 text-xs text-slate-700">
+                  {r.yieldIndex == null ? '—' : `${formatIndexPct(r.yieldIndex)} · ${r.predictedYield == null ? 'sem Ym' : formatScHa(r.predictedYield)}`}
+                </td>
                 <td className="px-4 py-2 font-mono text-xs text-slate-700">v{r.engineVersion}</td>
                 <td className="px-4 py-2 text-right">
                   {r.status === 'SUCCEEDED' && !selected && (

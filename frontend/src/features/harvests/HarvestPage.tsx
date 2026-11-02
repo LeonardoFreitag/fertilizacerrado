@@ -1,13 +1,14 @@
-import { useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { ConfirmDialog, Modal } from '@/components/dialog';
 import { ErrorState, LoadingState } from '@/components/states';
 import { useToast } from '@/components/toast';
-import { Badge, Button, PageHeader, Textarea } from '@/components/ui';
+import { Badge, Button, FormField, Input, PageHeader, Textarea } from '@/components/ui';
 import { messageFor } from '@/lib/api/errors';
-import { HARVEST_STATUS_LABELS, type HarvestStatus } from '@/lib/api/types';
+import { EXPECTED_YIELD_MAX_SC_HA, HARVEST_STATUS_LABELS, type HarvestStatus } from '@/lib/api/types';
 import { useSession } from '@/lib/auth/session';
-import { formatDate } from '@/lib/msa/msa';
+import { formatDate, formatScHa } from '@/lib/msa/msa';
+import { expectedYieldSchema } from '@/lib/validation/harvest';
 import { useField } from '../fields/api';
 import { MsaPanel } from '../msa/MsaPanel';
 import { useProperty } from '../properties/api';
@@ -28,6 +29,20 @@ export function HarvestPage() {
   const [confirm, setConfirm] = useState<HarvestStatus | null>(null);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notes, setNotes] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [editingYm, setEditingYm] = useState(false);
+  const [ym, setYm] = useState('');
+  const [ymError, setYmError] = useState<string | null>(null);
+  // ?editar=ym (link do bloco Produtividade) abre o diálogo da Ym
+  useEffect(() => {
+    if (searchParams.get('editar') === 'ym' && harvest.data && canManage) {
+      setYm(harvest.data.expectedYield == null ? '' : String(harvest.data.expectedYield));
+      setEditingYm(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('editar');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams, harvest.data, canManage]);
   const navState = (location.state as { msaJobId?: string | null; createdAt?: string } | null) ?? null;
 
   if (harvest.isPending) return <LoadingState />;
@@ -50,6 +65,22 @@ export function HarvestPage() {
       await update.mutateAsync({ notes: notes.trim() ? notes.trim() : null });
       toast.success('Notas atualizadas.');
       setEditingNotes(false);
+    } catch (e) {
+      toast.error(messageFor(e));
+    }
+  }
+
+  async function saveYm() {
+    const parsed = expectedYieldSchema.safeParse(ym);
+    if (!parsed.success) {
+      setYmError(parsed.error.issues[0]?.message ?? 'valor inválido');
+      return;
+    }
+    try {
+      await update.mutateAsync({ expectedYield: parsed.data ?? null });
+      toast.success(parsed.data == null ? 'Produtividade potencial removida.' : 'Produtividade potencial atualizada. Reprocesse para atualizar a predição.');
+      setEditingYm(false);
+      setYmError(null);
     } catch (e) {
       toast.error(messageFor(e));
     }
@@ -101,7 +132,26 @@ export function HarvestPage() {
       />
 
       <div className="card mb-6 flex flex-wrap items-start justify-between gap-3 text-sm">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[12rem]">
+          <div className="text-xs uppercase tracking-wide text-slate-500">Produtividade potencial (Ym)</div>
+          <p className="mt-0.5 text-slate-800" data-testid="harvest-ym">
+            {h.expectedYield == null ? <span className="text-slate-400">não informada</span> : formatScHa(h.expectedYield)}
+          </p>
+        </div>
+        {canManage && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setYm(h.expectedYield == null ? '' : String(h.expectedYield));
+              setYmError(null);
+              setEditingYm(true);
+            }}
+          >
+            Editar produtividade potencial
+          </Button>
+        )}
+        <div className="min-w-0 flex-1 basis-full">
           <div className="text-xs uppercase tracking-wide text-slate-500">Notas</div>
           <p className="mt-0.5 whitespace-pre-wrap text-slate-800">{h.notes ?? <span className="text-slate-400">—</span>}</p>
         </div>
@@ -137,7 +187,7 @@ export function HarvestPage() {
         title={confirm ? `${statusLabel[confirm]} safra` : ''}
         description={
           confirm === 'CANCELLED'
-            ? 'A safra deixa de ser processada pelo semanal. O histórico de runs e decisões é mantido.'
+            ? 'A safra deixa de ser processada pelo semanal. O histórico de runs é mantido.'
             : confirm === 'COMPLETED'
               ? 'Marca o ciclo como concluído; o semanal não processa mais esta safra.'
               : 'Volta a safra ao status ativa (o talhão não pode ter outra safra ativa).'
@@ -148,6 +198,25 @@ export function HarvestPage() {
         onConfirm={() => confirm && changeStatus(confirm)}
         onCancel={() => setConfirm(null)}
       />
+
+      <Modal open={editingYm} onClose={() => setEditingYm(false)} title="Produtividade potencial (sc/ha)">
+        <FormField
+          label="Produtividade potencial (sc/ha)"
+          htmlFor="ym"
+          error={ymError ?? undefined}
+          help={`Produtividade esperada sem estresse hídrico (até ${EXPECTED_YIELD_MAX_SC_HA} sc/ha). Vazio remove o valor. Alterar a produtividade potencial não recalcula a última execução; use Reprocessar para atualizar a predição.`}
+        >
+          <Input id="ym" inputMode="decimal" value={ym} onChange={(e) => setYm(e.target.value)} invalid={!!ymError} placeholder="ex.: 65" />
+        </FormField>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setEditingYm(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={saveYm} loading={update.isPending}>
+            Salvar
+          </Button>
+        </div>
+      </Modal>
 
       <Modal open={editingNotes} onClose={() => setEditingNotes(false)} title="Notas da safra">
         <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} rows={5} aria-label="Notas" />

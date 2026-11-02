@@ -19,6 +19,8 @@ export interface HarvestResponse {
   season: string;
   status: HarvestStatus;
   notes: string | null;
+  /** Produtividade potencial (Ym), sc/ha, ou null */
+  expectedYield: number | null;
   field: FieldRef;
   cultivar: { id: string; name: string; crop: Crop };
   createdAt: Date;
@@ -46,6 +48,7 @@ function toResponse(harvest: HarvestWithRelations): HarvestResponse {
     season: harvest.season,
     status: harvest.status,
     notes: harvest.notes,
+    expectedYield: harvest.expectedYield,
     field: harvest.field,
     cultivar: harvest.cultivar,
     createdAt: harvest.createdAt,
@@ -89,6 +92,7 @@ export const harvestService = {
           cultivarId: dto.cultivarId,
           emergenceDate: new Date(`${dto.emergenceDate}T00:00:00Z`),
           season: dto.season,
+          expectedYield: dto.expectedYield,
           notes: dto.notes,
         },
         tx,

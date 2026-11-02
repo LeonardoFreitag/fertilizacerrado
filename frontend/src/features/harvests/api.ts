@@ -37,7 +37,7 @@ export function useCreateHarvest() {
 export function useUpdateHarvest(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { status?: HarvestStatus; notes?: string | null; season?: string }) => api<HarvestResponse>(`/harvests/${id}`, { method: 'PATCH', body: payload }),
+    mutationFn: (payload: { status?: HarvestStatus; notes?: string | null; season?: string; expectedYield?: number | null }) => api<HarvestResponse>(`/harvests/${id}`, { method: 'PATCH', body: payload }),
     onSuccess: (data) => {
       qc.setQueryData(harvestKeys.detail(id), data);
       void qc.invalidateQueries({ queryKey: ['harvests', 'list'] });

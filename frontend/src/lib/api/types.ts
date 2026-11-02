@@ -127,8 +127,12 @@ export interface QueueCounts {
 
 // --- cultivares, safras e MSA --------------------------------------------------
 
-export type Crop = 'SOJA' | 'MILHO';
-export const CROP_LABELS: Record<Crop, string> = { SOJA: 'Soja', MILHO: 'Milho' };
+/** Só soja na Fase 1 (refocus-on-yield-prediction). */
+export type Crop = 'SOJA';
+export const CROP_LABELS: Record<Crop, string> = { SOJA: 'Soja' };
+
+/** Teto de sanidade da produtividade potencial (Ym), sc/ha — espelho de backend/src/modules/harvests/dtos. */
+export const EXPECTED_YIELD_MAX_SC_HA = 250;
 
 export const CULTIVAR_PARAM_KEYS = [
   'tBase', 'gdaTotal', 'gdaF1End', 'gdaF2End', 'gdaF3End',
@@ -146,11 +150,18 @@ export interface CultivarResponse extends CultivarParams {
   cycleDescription: string | null;
   isDefault: boolean;
   createdById: string | null;
+  /** Parâmetros da referência no momento da criação (null na própria referência) */
+  referenceSnapshot: Partial<CultivarParams> | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type CultivarPayload = Partial<CultivarParams> & { name?: string; crop?: Crop; cycleDescription?: string | null };
+export type CultivarPayload = Partial<CultivarParams> & { name?: string; cycleDescription?: string | null };
+
+export type SyncReferenceMode = 'unchanged' | 'all';
+export interface SyncReferenceResponse extends CultivarResponse {
+  updatedFields: CultivarParamKey[];
+}
 
 export type HarvestStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 export const HARVEST_STATUS_LABELS: Record<HarvestStatus, string> = { ACTIVE: 'Ativa', COMPLETED: 'Concluída', CANCELLED: 'Cancelada' };
@@ -165,6 +176,8 @@ export interface HarvestResponse {
   season: string;
   status: HarvestStatus;
   notes: string | null;
+  /** Produtividade potencial (Ym), sc/ha */
+  expectedYield: number | null;
   field: { id: string; name: string; propertyId: string };
   cultivar: { id: string; name: string; crop: Crop };
   createdAt: string;
@@ -176,6 +189,7 @@ export interface HarvestPayload {
   cultivarId: string;
   emergenceDate: string;
   season: string;
+  expectedYield?: number;
   notes?: string;
 }
 
@@ -190,12 +204,6 @@ export const PHASE_LABELS: Record<Phase, string> = {
   COMPLETED: 'Ciclo encerrado',
 };
 
-export interface Percentiles {
-  p10: number;
-  p50: number;
-  p90: number;
-}
-
 export interface PhaseView {
   phase: YieldPhase;
   days: number;
@@ -203,12 +211,6 @@ export interface PhaseView {
   etcAdjAccum: number;
   precipAccum: number;
   yieldReductionPct: number | null;
-  validIterations: number;
-  percentiles: {
-    ksMean: Percentiles | null;
-    yieldReductionPct: Percentiles | null;
-    etcAdjAccum: Percentiles | null;
-  };
 }
 
 export type MsaRunStatus = 'SUCCEEDED' | 'FAILED' | 'NEEDS_DATA';
@@ -225,10 +227,14 @@ export interface RunView {
   finishedAt: string;
   dateFrom: string;
   dateTo: string;
-  seed: number | null;
-  iterations: number | null;
-  sigmaPrecip: number | null;
-  sigmaTemp: number | null;
+  /** Ym da safra no momento da run (sc/ha) */
+  expectedYield: number | null;
+  /** Π_j [1 − Ky_j (1 − Ks̄_j)] sobre as janelas alcançadas */
+  yieldIndex: number | null;
+  /** expectedYield × yieldIndex (sc/ha); null sem Ym */
+  predictedYield: number | null;
+  /** Janelas F1–F4 com dias na série (0–4) */
+  phasesReached: number | null;
   engineVersion: string;
   cultivarSnapshot: unknown;
   soilSnapshot: unknown;
@@ -275,6 +281,8 @@ export interface MsaLatest {
   run: RunView;
   phases: PhaseView[] | null;
   currentPhase: Phase | null;
+  /** Algum parâmetro da cultivar atual difere do cultivarSnapshot da run */
+  cultivarChangedSinceRun: boolean;
 }
 
 export interface DailyRow {
@@ -297,72 +305,6 @@ export interface DailyRow {
 export interface DailySeries {
   runId: string;
   days: DailyRow[];
-}
-
-export type ScenarioCode = 'A' | 'B' | 'C';
-
-export interface ScenarioA {
-  doseBase: number;
-  ksP50: number;
-  doseAdjusted: number;
-  reductionPct: number;
-  rationale: string;
-}
-export interface ScenarioB {
-  nextPhase: YieldPhase;
-  days1: number;
-  days2: number;
-  etc1: number;
-  etc2: number;
-  fraction1: number;
-  fraction2: number;
-  dose1: number;
-  dose2: number;
-  rationale: string;
-}
-export interface ScenarioC {
-  efficiencyBase: number;
-  ksP50: number;
-  efficiencyAdjusted: number;
-  rationale: string;
-}
-export interface DecisionScenarios {
-  phase: YieldPhase;
-  ksP50: number;
-  a: ScenarioA;
-  b: ScenarioB | null;
-  bUnavailableReason: string | null;
-  c: ScenarioC;
-}
-
-/** Resposta de GET /msa/decision */
-export interface DecisionScenariosResponse {
-  runId: string;
-  scenarios: DecisionScenarios;
-}
-
-export interface DecisionView {
-  id: string;
-  harvestId: string;
-  runId: string;
-  phase: YieldPhase;
-  scenario: ScenarioCode;
-  doseBase: number;
-  efficiencyBase: number;
-  justification: string;
-  scenarioPayload: unknown;
-  decidedById: string;
-  decidedBy: UserSummary;
-  createdAt: string;
-}
-
-export interface RecordDecisionPayload {
-  phase: YieldPhase;
-  scenario: ScenarioCode;
-  doseBase: number;
-  efficiencyBase: number;
-  justification: string;
-  runId?: string;
 }
 
 export interface EnqueuedJob {

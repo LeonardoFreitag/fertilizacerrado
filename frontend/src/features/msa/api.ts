@@ -1,22 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/client';
-import type { DailySeries, DecisionScenariosResponse, DecisionView, EnqueuedJob, JobView, MsaLatest, RecordDecisionPayload, RunView, YieldPhase } from '@/lib/api/types';
+import type { DailySeries, EnqueuedJob, JobView, MsaLatest, RunView } from '@/lib/api/types';
 
 export const msaKeys = {
   all: (harvestId: string) => ['msa', harvestId] as const,
   latest: (harvestId: string) => ['msa', harvestId, 'latest'] as const,
   runs: (harvestId: string) => ['msa', harvestId, 'runs'] as const,
   daily: (harvestId: string, runId: string) => ['msa', harvestId, 'daily', runId] as const,
-  decisions: (harvestId: string) => ['msa', harvestId, 'decisions'] as const,
-  scenarios: (harvestId: string, p: DecisionParams) => ['msa', harvestId, 'scenarios', p.phase, p.doseBase, p.efficiencyBase, p.runId ?? 'latest'] as const,
 };
-
-export interface DecisionParams {
-  phase: YieldPhase;
-  doseBase: number;
-  efficiencyBase: number;
-  runId?: string;
-}
 
 /** Última run SUCCEEDED; 404 NO_MSA_RESULT é estado normal (sem retry). */
 export function useMsaLatest(harvestId: string | undefined) {
@@ -41,35 +32,9 @@ export function useDailySeries(harvestId: string | undefined, runId: string | un
   });
 }
 
-export function useDecisionScenarios(harvestId: string | undefined, params: DecisionParams | null) {
-  return useQuery({
-    queryKey: msaKeys.scenarios(harvestId ?? '', params ?? { phase: 'F1', doseBase: 0, efficiencyBase: 0 }),
-    queryFn: () =>
-      api<DecisionScenariosResponse>(`/harvests/${harvestId}/msa/decision`, {
-        query: { phase: params!.phase, doseBase: params!.doseBase, efficiencyBase: params!.efficiencyBase, runId: params!.runId },
-      }),
-    select: (d) => d.scenarios,
-    enabled: !!harvestId && !!params,
-    retry: false,
-    placeholderData: (prev) => prev,
-  });
-}
-
-export function useDecisions(harvestId: string | undefined) {
-  return useQuery({ queryKey: msaKeys.decisions(harvestId ?? ''), queryFn: () => api<DecisionView[]>(`/harvests/${harvestId}/msa/decisions`), enabled: !!harvestId });
-}
-
-export function useRecordDecision(harvestId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: RecordDecisionPayload) => api<DecisionView>(`/harvests/${harvestId}/msa/decisions`, { method: 'POST', body: payload }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: msaKeys.decisions(harvestId) }),
-  });
-}
-
 export function useProcessHarvest(harvestId: string) {
   return useMutation({
-    mutationFn: (seed?: number) => api<EnqueuedJob>(`/harvests/${harvestId}/msa/process`, { method: 'POST', query: { seed } }),
+    mutationFn: () => api<EnqueuedJob>(`/harvests/${harvestId}/msa/process`, { method: 'POST' }),
   });
 }
 

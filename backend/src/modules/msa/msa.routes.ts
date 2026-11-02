@@ -11,6 +11,3 @@ msaRoutes.post('/process', manage, msaController.process);
 msaRoutes.get('/', msaController.latest);
 msaRoutes.get('/daily', msaController.daily);
 msaRoutes.get('/runs', msaController.runs);
-msaRoutes.get('/decision', msaController.decision);
-msaRoutes.post('/decisions', manage, msaController.recordDecision);
-msaRoutes.get('/decisions', msaController.decisions);

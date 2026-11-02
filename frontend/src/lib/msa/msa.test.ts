@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { csvCell, slug, toCsv } from './csv';
-import { formatMm, formatPct, formatPercentiles, phaseRanges, severity, suggestSeason } from './msa';
+import type { PhaseView } from '../api/types';
+import { formatIndexPct, formatMm, formatPct, formatScHa, phaseRanges, severity, suggestSeason, summariesCsv, yieldSummaryRows, yieldWarnings } from './msa';
 
 describe('severity', () => {
   it('limiares 0,85 e 0,70', () => {
@@ -57,11 +58,12 @@ describe('phaseRanges', () => {
 });
 
 describe('formatação', () => {
-  it('percentis e unidades em pt-BR', () => {
-    expect(formatPercentiles({ p10: 0.61, p50: 0.78, p90: 0.91 })).toBe('P10 0,61 · P50 0,78 · P90 0,91');
-    expect(formatPercentiles(null)).toBe('—');
+  it('unidades em pt-BR', () => {
     expect(formatPct(12.345)).toBe('12,3%');
     expect(formatMm(1234.56)).toBe('1.234,6 mm');
+    expect(formatIndexPct(0.736)).toBe('73,6 %');
+    expect(formatIndexPct(null)).toBe('—');
+    expect(formatScHa(47.84)).toBe('47,8 sc/ha');
   });
 
   it('safra sugerida pela emergência', () => {
@@ -89,5 +91,60 @@ describe('csv', () => {
 
   it('slug de nome de arquivo', () => {
     expect(slug('Talhão Norte — Soja 2025/26')).toBe('talhao-norte-soja-2025-26');
+  });
+});
+
+const phase = (phase: PhaseView['phase'], days: number, ksMean: number | null, reduction: number | null): PhaseView => ({
+  phase, days, ksMean, etcAdjAccum: 100, precipAccum: 50, yieldReductionPct: reduction,
+});
+
+describe('yieldSummaryRows', () => {
+  it('ciclo completo: fator = 1 − redução/100 por janela', () => {
+    const rows = yieldSummaryRows([phase('F1', 8, 1, 0), phase('F2', 22, 0.9, 8), phase('F3', 30, 0.8, 20), phase('F4', 20, 1, 0)]);
+    expect(rows.map((r) => r.phase)).toEqual(['F1', 'F2', 'F3', 'F4']);
+    expect(rows.map((r) => r.reached)).toEqual([true, true, true, true]);
+    expect(rows[1]!.factor).toBeCloseTo(0.92, 9);
+    expect(rows[2]!.factor).toBeCloseTo(0.8, 9);
+    expect(rows.reduce((acc, r) => acc * r.factor, 1)).toBeCloseTo(0.736, 9);
+  });
+
+  it('janela não alcançada: fator 1, Ks e redução nulos, mesmo faltando na lista', () => {
+    const rows = yieldSummaryRows([phase('F1', 8, 1, 0), phase('F2', 10, 0.9, 8), phase('F3', 0, null, null)]);
+    expect(rows[2]).toMatchObject({ phase: 'F3', reached: false, factor: 1, ksMean: null, reductionPct: null });
+    expect(rows[3]).toMatchObject({ phase: 'F4', reached: false, factor: 1, days: 0 });
+  });
+});
+
+describe('yieldWarnings', () => {
+  it('parcial enquanto phasesReached < 4 ou o ciclo não encerrou', () => {
+    expect(yieldWarnings({ phasesReached: 2, currentPhase: 'F2', runYm: 65, harvestYm: 65 }).partial).toBe(true);
+    expect(yieldWarnings({ phasesReached: 4, currentPhase: 'F4', runYm: 65, harvestYm: 65 }).partial).toBe(true);
+    expect(yieldWarnings({ phasesReached: 4, currentPhase: 'COMPLETED', runYm: 65, harvestYm: 65 }).partial).toBe(false);
+  });
+
+  it('Ym alterada: safra ≠ run, inclusive informada depois de uma run sem Ym', () => {
+    expect(yieldWarnings({ phasesReached: 4, currentPhase: 'COMPLETED', runYm: 65, harvestYm: 70 }).ymChanged).toBe(true);
+    expect(yieldWarnings({ phasesReached: 4, currentPhase: 'COMPLETED', runYm: null, harvestYm: 70 }).ymChanged).toBe(true);
+    expect(yieldWarnings({ phasesReached: 4, currentPhase: 'COMPLETED', runYm: 65, harvestYm: 65 }).ymChanged).toBe(false);
+    expect(yieldWarnings({ phasesReached: 4, currentPhase: 'COMPLETED', runYm: null, harvestYm: null }).ymChanged).toBe(false);
+  });
+});
+
+describe('summariesCsv', () => {
+  const phases = [phase('F1', 8, 1, 0), phase('F2', 22, 0.9, 8), phase('F3', 30, 0.8, 20), phase('F4', 0, null, null)];
+
+  it('com Ym: cabeçalho da spec, quatro linhas, índice/Ym/predita repetidos, sem percentis', () => {
+    const csv = summariesCsv(phases, { yieldIndex: 0.736, expectedYield: 65, predictedYield: 47.84 }).replace('\ufeff', '');
+    const lines = csv.trimEnd().split('\r\n');
+    expect(lines[0]).toBe('janela;dias;ks_medio;reducao_pct;etc_adj_mm;chuva_mm;indice_ciclo;ym_sc_ha;predita_sc_ha');
+    expect(lines).toHaveLength(5);
+    expect(lines[2]).toBe('F2;22;0,9;8;100;50;0,736;65;47,84');
+    expect(lines[4]).toBe('F4;0;;;100;50;0,736;65;47,84');
+    expect(csv).not.toMatch(/p10|p50|p90/);
+  });
+
+  it('sem Ym: índice preenchido, Ym e predita vazios em todas as linhas', () => {
+    const lines = summariesCsv(phases, { yieldIndex: 0.736, expectedYield: null, predictedYield: null }).replace('\ufeff', '').trimEnd().split('\r\n');
+    expect(lines.slice(1).every((l) => l.endsWith(';0,736;;'))).toBe(true);
   });
 });

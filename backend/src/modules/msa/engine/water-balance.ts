@@ -61,8 +61,7 @@ function assertFinite(value: number, name: string, index: number): void {
  *     chuva acima da depleção percola; Dr não excede TAW).
  *
  * Determinístico; um único laço com variáveis escalares, sem estruturas
- * intermediárias além da linha de saída de cada dia (é chamado ~1.000× pelo
- * Monte Carlo). `docs/msa/algoritmos.md` §5.
+ * intermediárias além da linha de saída de cada dia. `docs/msa/algoritmos.md` §5.
  */
 export function runDailyBalance(
   days: ReadonlyArray<DailyWeather>,

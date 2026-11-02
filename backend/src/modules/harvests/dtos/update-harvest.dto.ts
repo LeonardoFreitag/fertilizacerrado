@@ -1,12 +1,14 @@
 import { z } from 'zod';
 import { forbiddenField } from '../../cultivars/dtos/create-cultivar.dto';
-import { HARVEST_STATUSES, harvestNotesSchema, seasonSchema } from './create-harvest.dto';
+import { expectedYieldSchema, HARVEST_STATUSES, harvestNotesSchema, seasonSchema } from './create-harvest.dto';
 
 export const updateHarvestSchema = z
   .object({
     status: z.enum(HARVEST_STATUSES),
     notes: harvestNotesSchema.nullable(),
     season: seasonSchema,
+    // Alterar a Ym não recalcula runs existentes: a predição pertence à run.
+    expectedYield: expectedYieldSchema.nullable(),
   })
   .partial()
   .extend({

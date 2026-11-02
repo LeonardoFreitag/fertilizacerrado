@@ -1,5 +1,5 @@
 /**
- * Persistência do MSA: runs, série baseline, resumos por janela e decisões.
+ * Persistência do MSA: runs, série diária e resumos por janela.
  */
 import type { MsaRun, MsaRunStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
@@ -8,6 +8,7 @@ export const harvestForProcessingSelect = {
   id: true,
   status: true,
   emergenceDate: true,
+  expectedYield: true,
   latestRunId: true,
   field: { select: { id: true, name: true, propertyId: true, altitudeM: true, thetaFC: true, thetaWP: true } },
   cultivar: true,
@@ -17,11 +18,6 @@ export type HarvestForProcessing = Prisma.HarvestGetPayload<{ select: typeof har
 
 const runWithSummaries = { phaseSummaries: { orderBy: { phase: 'asc' } } } satisfies Prisma.MsaRunInclude;
 export type RunWithSummaries = Prisma.MsaRunGetPayload<{ include: typeof runWithSummaries }>;
-
-const decisionInclude = {
-  decidedBy: { select: { id: true, name: true, email: true } },
-} satisfies Prisma.MsaDecisionInclude;
-export type DecisionWithUser = Prisma.MsaDecisionGetPayload<{ include: typeof decisionInclude }>;
 
 export type RunCreate = Omit<Prisma.MsaRunUncheckedCreateInput, 'status'> & { status: MsaRunStatus };
 export type DailyCreate = Omit<Prisma.MsaDailyResultCreateManyInput, 'runId'>;
@@ -64,13 +60,5 @@ export const msaRepository = {
 
   dailyResults(runId: string) {
     return prisma.msaDailyResult.findMany({ where: { runId }, orderBy: { date: 'asc' } });
-  },
-
-  createDecision(data: Prisma.MsaDecisionUncheckedCreateInput): Promise<DecisionWithUser> {
-    return prisma.msaDecision.create({ data, include: decisionInclude });
-  },
-
-  listDecisions(harvestId: string): Promise<DecisionWithUser[]> {
-    return prisma.msaDecision.findMany({ where: { harvestId }, include: decisionInclude, orderBy: { createdAt: 'desc' } });
   },
 };

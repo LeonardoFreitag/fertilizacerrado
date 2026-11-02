@@ -43,7 +43,6 @@ export function refineCultivarParams(v: Record<CultivarParamKey, number>, ctx: z
 export const cultivarSchema = z
   .object({
     name: z.string().trim().min(2, 'deve ter no mínimo 2 caracteres').max(120, 'deve ter no máximo 120 caracteres'),
-    crop: z.enum(['SOJA', 'MILHO'], { errorMap: () => ({ message: 'escolha a cultura' }) }),
     cycleDescription: z
       .string()
       .trim()

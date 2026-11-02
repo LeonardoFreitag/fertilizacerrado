@@ -77,7 +77,7 @@ async function login(page: Page, email: string, password: string) {
 
 test.describe.configure({ mode: 'serial' });
 
-test('safra → processamento → painel → cenários → decisão → CSV', async ({ page }) => {
+test('safra com Ym → processamento → painel com produtividade predita → Ym alterada → CSV', async ({ page }) => {
   test.setTimeout(8 * 60_000);
   const pageErrors: string[] = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -103,6 +103,7 @@ test('safra → processamento → painel → cenários → decisão → CSV', as
   await page.locator('#cultivarId').selectOption(sojaValue!);
   await page.locator('#emergenceDate').fill('2025-11-01');
   await expect(page.locator('#season')).toHaveValue('2025/26'); // sugerida pela emergência
+  await page.locator('#expectedYield').fill('65');
   await page.getByRole('button', { name: 'Cadastrar safra' }).click();
 
   // acompanhamento do backfill (cache do ETL → ~30 s) e painel
@@ -120,19 +121,42 @@ test('safra → processamento → painel → cenários → decisão → CSV', as
   await expect(page.getByLabel('Linha do tempo fenológica')).toContainText('ciclo encerrado');
   await expect(page.getByTestId('msa-charts').locator('.recharts-wrapper')).toHaveCount(3, { timeout: 20_000 }); // 3 gráficos (os ícones da legenda também são svg)
 
-  // cenários F3 e registro da decisão A
-  await page.locator('#dec-phase').selectOption('F3');
-  await page.locator('#dec-dose').fill('100');
-  await page.locator('#dec-eff').fill('0,6');
-  await expect(page.getByTestId('scenario-A')).toContainText('kg/ha', { timeout: 15_000 });
-  await expect(page.getByTestId('scenario-C')).toContainText('eficiência ajustada');
-  await page.getByRole('button', { name: 'Registrar decisão A' }).click();
-  await page.locator('#dec-just').fill('Estiagem em F3 observada no balanço hídrico');
-  await page.getByRole('button', { name: 'Registrar', exact: true }).click();
-  await expect(page.getByTestId('decisions-list')).toContainText('Estiagem em F3');
-  await expect(page.getByTestId('decisions-list')).toContainText('MSA Agrônoma');
+  // bloco Produtividade: Ym 65, índice e predita; ciclo encerrado ⇒ sem aviso de parcial
+  const yieldBlock = page.getByTestId('yield-summary');
+  await expect(yieldBlock).toBeVisible();
+  await expect(page.getByTestId('yield-ym')).toContainText('65,0 sc/ha');
+  await expect(page.getByTestId('yield-index')).toContainText('%');
+  await expect(page.getByTestId('yield-predicted')).toContainText('sc/ha');
+  await expect(yieldBlock).toContainText('4 de 4 janelas');
+  await expect(page.getByTestId('yield-partial')).toHaveCount(0);
+  await expect(page.getByTestId('yield-ym-changed')).toHaveCount(0);
+  const predicted = (await page.getByTestId('yield-predicted').textContent()) ?? '';
+  expect(Number(predicted.replace(' sc/ha', '').replace(',', '.'))).toBeLessThanOrEqual(65);
+  // sem semente, percentis ou cenários no painel
+  await expect(page.getByText('Semente')).toHaveCount(0);
+  await expect(page.getByText(/P10|P50|P90/)).toHaveCount(0);
+  await expect(page.getByText('Cenários de decisão')).toHaveCount(0);
 
-  // exportação CSV
+  // Ym alterada depois da run ⇒ aviso para reprocessar
+  await page.getByRole('button', { name: 'Editar produtividade potencial' }).click();
+  await page.locator('#ym').fill('70');
+  await page.getByRole('button', { name: 'Salvar', exact: true }).click();
+  await expect(page.getByTestId('harvest-ym')).toContainText('70,0 sc/ha');
+  await expect(page.getByTestId('yield-ym-changed')).toBeVisible();
+  await expect(page.getByTestId('yield-ym')).toContainText('65,0 sc/ha'); // a run mantém a Ym da época
+
+  // exportação CSV de resumos: sem percentis, com índice/Ym/predita
+  const [summaries] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Exportar resumos' }).click()]);
+  expect(summaries.suggestedFilename()).toMatch(/^resumos-.*\.csv$/);
+  const sumStream = await summaries.createReadStream();
+  const sumChunks: Buffer[] = [];
+  for await (const c of sumStream) sumChunks.push(Buffer.from(c));
+  const sumCsv = Buffer.concat(sumChunks).toString('utf8');
+  expect(sumCsv.split('\r\n')[0]).toBe('\ufeffjanela;dias;ks_medio;reducao_pct;etc_adj_mm;chuva_mm;indice_ciclo;ym_sc_ha;predita_sc_ha');
+  expect(sumCsv).not.toMatch(/p10|p50|p90/i);
+  expect(sumCsv.trim().split('\r\n')).toHaveLength(5);
+
+  // exportação CSV da série diária
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Exportar série diária' }).click()]);
   expect(download.suggestedFilename()).toMatch(/^serie-diaria-.*\.csv$/);
   const stream = await download.createReadStream();
@@ -143,8 +167,40 @@ test('safra → processamento → painel → cenários → decisão → CSV', as
   expect(csv.split('\r\n')[0]).toContain('Data;Fase;GDA do dia');
   expect(csv).toMatch(/;0,\d+;/); // vírgula decimal
 
-  // histórico de runs lista a run BACKFILL
+  // histórico de runs lista a run BACKFILL com índice e predita, sem semente
   await expect(page.getByLabel('Histórico de runs')).toContainText('Criação da safra');
+  await expect(page.getByLabel('Histórico de runs')).toContainText('Índice · predita');
+});
+
+test('nova cultivar nasce da referência e marca divergências', async ({ page }) => {
+  await login(page, EMAIL, PASSWORD);
+  await page.getByRole('link', { name: 'Cultivares' }).click();
+  await page.getByRole('link', { name: 'Nova cultivar' }).first().click();
+  // pré-preenchida com a referência de soja, sem campo de cultura
+  await expect(page.locator('#gdaTotal')).toHaveValue('1200');
+  await expect(page.locator('#kcMid')).toHaveValue('1.15');
+  await expect(page.locator('#crop')).toHaveCount(0);
+  await expect(page.getByTestId('divergence-summary')).toContainText('igual à referência');
+  await page.locator('#kcMid').fill('1.10');
+  await expect(page.getByTestId('param-kcMid')).toHaveAttribute('data-divergent', 'true');
+  await expect(page.getByTestId('param-kcMid')).toContainText('ref. 1,15');
+  await expect(page.getByTestId('divergence-summary')).toContainText('1 parâmetro difere da referência');
+  await page.locator('#name').fill(`Soja E2E ${stamp}`);
+  await page.getByRole('button', { name: 'Cadastrar cultivar' }).click();
+  await expect(page.getByRole('heading', { name: 'Cultivares', exact: true })).toBeVisible();
+  const card = page.locator('li', { hasText: `Soja E2E ${stamp}` }).first();
+  await expect(card.getByTestId('card-divergence')).toContainText('1 parâmetro difere da referência');
+
+  // edição (sem congelamento) com a ação de sincronizar: nada a atualizar no modo "não alterei"
+  await card.getByRole('link', { name: 'Editar' }).click();
+  await expect(page.getByTestId('in-use-note')).toBeVisible();
+  await page.getByRole('button', { name: 'Atualizar a partir da referência' }).click();
+  await expect(page.getByTestId('sync-preview')).toContainText('Nada a atualizar');
+  await page.getByRole('radio', { name: /Todos os campos/ }).check();
+  await expect(page.getByTestId('sync-preview')).toContainText('kcMid');
+  await page.getByRole('button', { name: 'Atualizar', exact: true }).click();
+  await expect(page.locator('#kcMid')).toHaveValue('1.15');
+  await expect(page.getByTestId('divergence-summary')).toContainText('igual à referência');
 });
 
 test('admin: process-all mostra jobId e estado', async ({ page }) => {

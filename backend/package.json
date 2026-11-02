@@ -19,8 +19,7 @@
     "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "msa:validate-et0": "ts-node --transpile-only scripts/validation/et0-validate.ts",
-    "msa:validate-mc": "ts-node --transpile-only scripts/validation/mc-validate.ts"
+    "msa:validate-et0": "ts-node --transpile-only scripts/validation/et0-validate.ts"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"

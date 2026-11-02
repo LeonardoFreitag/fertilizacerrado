@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Roteiro de ponta a ponta dos módulos cultivars e harvests contra a stack do Compose.
 # Pré-requisitos e uso: ver README.md neste diretório (exige o seed executado:
-# admin e cultivares de referência).
+# admin e cultivar de referência de soja).
 set -u
 cd "$(dirname "$0")/../../.."          # raiz do repositório (onde está o .env)
 S=$(mktemp -d); trap 'rm -rf "$S"; resume_workers' EXIT  # arquivos temporários do curl
@@ -65,38 +65,44 @@ call POST "/properties/$P_BIA/fields" "$BIA" "{\"name\":\"TB\",\"geometry\":$SQ}
 check "talhões criados" 3 "$(sql 'SELECT count(*) FROM fields')"
 
 echo "== Cultivares: referência e visibilidade =="
-check "duas cultivares de referência no banco" 2 "$(sql 'SELECT count(*) FROM cultivars WHERE is_default')"
-SOJA_REF=$(sql "SELECT id FROM cultivars WHERE is_default AND crop='SOJA'"); MILHO_REF=$(sql "SELECT id FROM cultivars WHERE is_default AND crop='MILHO'")
+check "uma cultivar de referência no banco (só soja)" 1 "$(sql 'SELECT count(*) FROM cultivars WHERE is_default')"
+check "enum crop só com SOJA" SOJA "$(sql "SELECT string_agg(enumlabel, ',') FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'crop'")"
+SOJA_REF=$(sql "SELECT id FROM cultivars WHERE is_default AND crop='SOJA'")
 check "referência soja: valores do seed" "10|1200|120|450|900|0.2|1.15|0.5|0.5|0.3|0.95|0.2|0.8|1|0.4" "$(sql "SELECT t_base,gda_total,gda_f1_end,gda_f2_end,gda_f3_end,kc_ini,kc_mid,kc_end,depletion_fraction,zr_ini,zr_max,ky_f1,ky_f2,ky_f3,ky_f4 FROM cultivars WHERE id='$SOJA_REF'")"
-check "referência milho: ky FAO-33" "0.4|0.4|1.5|0.5" "$(sql "SELECT ky_f1,ky_f2,ky_f3,ky_f4 FROM cultivars WHERE id='$MILHO_REF'")"
+check "referência sem referenceSnapshot" "" "$(sql "SELECT reference_snapshot FROM cultivars WHERE id='$SOJA_REF'")"
 call GET /cultivars "";        check "sem token → 401" 401 "$STATUS"
-call GET /cultivars "$PEDRO";  check "produtor lista → 200" 200 "$STATUS"; check "produtor vê as 2 de referência" 2 "$(echo "$BODY" | j length)"
-call GET "/cultivars?crop=MILHO" "$PEDRO"; check "filtro por cultura" 1 "$(echo "$BODY" | j length)"; check "é milho" MILHO "$(echo "$BODY" | j 0.crop)"
-call GET "/cultivars?crop=TRIGO" "$PEDRO"; check "cultura desconhecida → 400" 400 "$STATUS"
+call GET /cultivars "$PEDRO";  check "produtor lista → 200" 200 "$STATUS"; check "produtor vê a referência" 1 "$(echo "$BODY" | j length)"
+call GET "/cultivars?crop=MILHO" "$PEDRO"; check "?crop= ignorado → 200" 200 "$STATUS"; check "listagem normal" 1 "$(echo "$BODY" | j length)"
+call GET "/cultivars/reference" "$PEDRO"; check "GET /cultivars/reference → 200" 200 "$STATUS"; check "é a referência de soja" "$SOJA_REF|true|SOJA|10" "$(echo "$BODY" | j id)|$(echo "$BODY" | j isDefault)|$(echo "$BODY" | j crop)|$(echo "$BODY" | j tBase)"
+call GET "/cultivars/reference" ""; check "reference sem token → 401" 401 "$STATUS"
 call GET "/cultivars/$SOJA_REF" "$PEDRO"; check "detalhe de referência → 200" 200 "$STATUS"; check "isDefault true" true "$(echo "$BODY" | j isDefault)"
 
 echo "== Cultivares: cadastro =="
 PARAMS='"tBase":10,"gdaTotal":1300,"gdaF1End":130,"gdaF2End":480,"gdaF3End":950,"kcIni":0.25,"kcMid":1.1,"kcEnd":0.5,"depletionFraction":0.5,"zrIni":0.3,"zrMax":0.9,"kyF1":0.2,"kyF2":0.8,"kyF3":1.0,"kyF4":0.4'
-call POST /cultivars "$PEDRO" "{\"name\":\"Soja do Pedro\",\"crop\":\"SOJA\",$PARAMS}"; check "produtor cadastra → 403" 403 "$STATUS"
-call POST /cultivars "$ANA" "{\"name\":\"Soja da Ana\",\"crop\":\"SOJA\",$PARAMS}";     check "agrônoma cadastra → 201" 201 "$STATUS"
+call POST /cultivars "$PEDRO" "{\"name\":\"Soja do Pedro\",$PARAMS}"; check "produtor cadastra → 403" 403 "$STATUS"
+call POST /cultivars "$ANA" "{\"name\":\"Soja da Ana\",$PARAMS}";     check "agrônoma cadastra → 201" 201 "$STATUS"
 C_ANA=$(echo "$BODY" | j id); check "isDefault false" false "$(echo "$BODY" | j isDefault)"; check "createdById = Ana" "$ANA_ID" "$(echo "$BODY" | j createdById)"
-call POST /cultivars "$ANA" "{\"name\":\"Soja da Ana\",\"crop\":\"SOJA\",$PARAMS}";     check "mesmo nome, mesma criadora → 409" 409 "$STATUS"; contains "código CULTIVAR_NAME_IN_USE" "$BODY" CULTIVAR_NAME_IN_USE
-call POST /cultivars "$BIA" "{\"name\":\"Soja da Ana\",\"crop\":\"SOJA\",$PARAMS}";     check "mesmo nome, outra criadora → 201" 201 "$STATUS"; C_BIA=$(echo "$BODY" | j id)
-call POST /cultivars "$ANA" "{\"name\":\"Ref falsa\",\"crop\":\"SOJA\",$PARAMS,\"isDefault\":true}"; check "isDefault no corpo → 400" 400 "$STATUS"; contains "aponta isDefault" "$BODY" '"isDefault"'
-call POST /cultivars "$ANA" "{\"name\":\"Incompleta\",\"crop\":\"SOJA\",${PARAMS/,\"kyF3\":1.0/}}"; check "parâmetro ausente → 400" 400 "$STATUS"; contains "aponta kyF3" "$BODY" '"kyF3"'
-call POST /cultivars "$ANA" "{\"name\":\"X\",\"crop\":\"SOJA\",${PARAMS/\"gdaF2End\":480/\"gdaF2End\":130}}"; check "gdaF2End ≤ gdaF1End → 400" 400 "$STATUS"; contains "aponta gdaF2End" "$BODY" '"gdaF2End"'
-call POST /cultivars "$ANA" "{\"name\":\"X\",\"crop\":\"SOJA\",${PARAMS/\"gdaF3End\":950/\"gdaF3End\":1300}}"; check "gdaF3End = gdaTotal → 400" 400 "$STATUS"; contains "aponta gdaF3End" "$BODY" '"gdaF3End"'
-call POST /cultivars "$ANA" "{\"name\":\"X\",\"crop\":\"SOJA\",${PARAMS/\"kcMid\":1.1/\"kcMid\":1.6}}"; check "kcMid 1.6 → 400" 400 "$STATUS"
-call POST /cultivars "$ANA" "{\"name\":\"X\",\"crop\":\"SOJA\",${PARAMS/\"depletionFraction\":0.5/\"depletionFraction\":1}}"; check "p = 1 → 400" 400 "$STATUS"; contains "aponta depletionFraction" "$BODY" '"depletionFraction"'
-call POST /cultivars "$ANA" "{\"name\":\"X\",\"crop\":\"SOJA\",${PARAMS/\"zrMax\":0.9/\"zrMax\":0.2}}"; check "zrIni > zrMax → 400 em zrMax" 400 "$STATUS"; contains "aponta zrMax" "$BODY" '"zrMax"'
-call POST /cultivars "$ANA" "{\"name\":\"X\",\"crop\":\"SOJA\",${PARAMS/\"zrMax\":0.9/\"zrMax\":3.5}}"; check "zrMax 3.5 → 400" 400 "$STATUS"
-call POST /cultivars "$ANA" "{\"name\":\"X\",\"crop\":\"SOJA\",${PARAMS/\"kyF1\":0.2/\"kyF1\":-0.1}}"; check "ky negativo → 400" 400 "$STATUS"
-call POST /cultivars "$ANA" "{\"name\":\"Ky limite\",\"crop\":\"MILHO\",${PARAMS/\"kyF3\":1.0/\"kyF3\":1.5}}"; check "ky 1.5 aceito → 201" 201 "$STATUS"; C_KY=$(echo "$BODY" | j id)
+check "crop SOJA gravado pelo servidor" SOJA "$(echo "$BODY" | j crop)"
+check "referenceSnapshot = parâmetros da referência" "10|1200|1.15" "$(echo "$BODY" | j referenceSnapshot.tBase)|$(echo "$BODY" | j referenceSnapshot.gdaTotal)|$(echo "$BODY" | j referenceSnapshot.kcMid)"
+call POST /cultivars "$ANA" "{\"name\":\"Soja da Ana\",$PARAMS}";     check "mesmo nome, mesma criadora → 409" 409 "$STATUS"; contains "código CULTIVAR_NAME_IN_USE" "$BODY" CULTIVAR_NAME_IN_USE
+call POST /cultivars "$BIA" "{\"name\":\"Soja da Ana\",$PARAMS}";     check "mesmo nome, outra criadora → 201" 201 "$STATUS"; C_BIA=$(echo "$BODY" | j id)
+call POST /cultivars "$ANA" "{\"name\":\"Ref falsa\",$PARAMS,\"isDefault\":true}"; check "isDefault no corpo → 400" 400 "$STATUS"; contains "aponta isDefault" "$BODY" '"isDefault"'
+call POST /cultivars "$ANA" "{\"name\":\"Com crop\",\"crop\":\"SOJA\",$PARAMS}"; check "crop no corpo → 400" 400 "$STATUS"; contains "aponta crop" "$BODY" '"crop"'
+call POST /cultivars "$ANA" "{\"name\":\"Milho\",\"crop\":\"MILHO\",$PARAMS}"; check "crop MILHO → 400" 400 "$STATUS"
+call POST /cultivars "$ANA" "{\"name\":\"Incompleta\",${PARAMS/,\"kyF3\":1.0/}}"; check "parâmetro ausente → 400" 400 "$STATUS"; contains "aponta kyF3" "$BODY" '"kyF3"'
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"gdaF2End\":480/\"gdaF2End\":130}}"; check "gdaF2End ≤ gdaF1End → 400" 400 "$STATUS"; contains "aponta gdaF2End" "$BODY" '"gdaF2End"'
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"gdaF3End\":950/\"gdaF3End\":1300}}"; check "gdaF3End = gdaTotal → 400" 400 "$STATUS"; contains "aponta gdaF3End" "$BODY" '"gdaF3End"'
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"kcMid\":1.1/\"kcMid\":1.6}}"; check "kcMid 1.6 → 400" 400 "$STATUS"
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"depletionFraction\":0.5/\"depletionFraction\":1}}"; check "p = 1 → 400" 400 "$STATUS"; contains "aponta depletionFraction" "$BODY" '"depletionFraction"'
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"zrMax\":0.9/\"zrMax\":0.2}}"; check "zrIni > zrMax → 400 em zrMax" 400 "$STATUS"; contains "aponta zrMax" "$BODY" '"zrMax"'
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"zrMax\":0.9/\"zrMax\":3.5}}"; check "zrMax 3.5 → 400" 400 "$STATUS"
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"kyF1\":0.2/\"kyF1\":-0.1}}"; check "ky negativo → 400" 400 "$STATUS"
+call POST /cultivars "$ANA" "{\"name\":\"Ky limite\",${PARAMS/\"kyF3\":1.0/\"kyF3\":1.5}}"; check "ky 1.5 aceito → 201" 201 "$STATUS"; C_KY=$(echo "$BODY" | j id)
 
 echo "== Cultivares: visibilidade das próprias =="
-call GET /cultivars "$ANA";   check "Ana vê 2 ref + 2 suas" 4 "$(echo "$BODY" | j length)"; lacks "Ana não vê a da Bia" "$BODY" "\"id\":\"$C_BIA\""
-call GET /cultivars "$BIA";   check "Bia vê 2 ref + 1 sua" 3 "$(echo "$BODY" | j length)"
-call GET /cultivars "$ADMIN"; check "admin vê todas (5)" 5 "$(echo "$BODY" | j length)"
+call GET /cultivars "$ANA";   check "Ana vê 1 ref + 2 suas" 3 "$(echo "$BODY" | j length)"; lacks "Ana não vê a da Bia" "$BODY" "\"id\":\"$C_BIA\""
+call GET /cultivars "$BIA";   check "Bia vê 1 ref + 1 sua" 2 "$(echo "$BODY" | j length)"
+call GET /cultivars "$ADMIN"; check "admin vê todas (4)" 4 "$(echo "$BODY" | j length)"
 call GET "/cultivars/$C_BIA" "$ANA";   check "detalhe de cultivar alheia → 404" 404 "$STATUS"
 call GET "/cultivars/$C_ANA" "$ADMIN"; check "admin detalha qualquer → 200" 200 "$STATUS"
 
@@ -128,13 +134,17 @@ call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" "$TOMORROW")";     check "emer
 call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" 2025-11-10T00:00:00Z)"; check "data com hora → 400" 400 "$STATUS"; contains "aponta emergenceDate" "$BODY" '"emergenceDate"'
 call POST /harvests "$ANA" "{\"fieldId\":\"$T1\",\"cultivarId\":\"$SOJA_REF\",\"emergenceDate\":\"2025-11-10\",\"season\":\"2025/27\"}"; check "season 2025/27 → 400" 400 "$STATUS"; contains "aponta season" "$BODY" '"season"'
 call POST /harvests "$ANA" "{\"fieldId\":\"$T1\",\"cultivarId\":\"$SOJA_REF\",\"emergenceDate\":\"2025-11-10\",\"season\":\"25/26\"}"; check "season 25/26 → 400" 400 "$STATUS"
-call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" 2025-11-10 '"notes":"Plantio direto"')"; check "safra válida → 201" 201 "$STATUS"
+call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" 2025-11-10 '"expectedYield":0')";   check "expectedYield 0 → 400" 400 "$STATUS"; contains "aponta expectedYield" "$BODY" '"expectedYield"'
+call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" 2025-11-10 '"expectedYield":300')"; check "expectedYield 300 → 400" 400 "$STATUS"
+call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" 2025-11-10 '"expectedYield":"alta"')"; check "expectedYield texto → 400" 400 "$STATUS"
+call POST /harvests "$ANA" "$(H "$T1" "$SOJA_REF" 2025-11-10 '"notes":"Plantio direto","expectedYield":65')"; check "safra válida → 201" 201 "$STATUS"
 H1=$(echo "$BODY" | j id)
+check "expectedYield 65" 65 "$(echo "$BODY" | j expectedYield)"
 check "resposta da criação traz msaJobId" 1 "$( [ -n "$(echo "$BODY" | j msaJobId)" ] && echo 1 || echo 0 )"
 check "status ACTIVE" ACTIVE "$(echo "$BODY" | j status)"; check "emergenceDate YYYY-MM-DD" 2025-11-10 "$(echo "$BODY" | j emergenceDate)"
 check "field.propertyId" "$P" "$(echo "$BODY" | j field.propertyId)"; check "cultivar.crop" SOJA "$(echo "$BODY" | j cultivar.crop)"; check "notes" "Plantio direto" "$(echo "$BODY" | j notes)"
-call POST /harvests "$ANA" "$(H "$T2" "$SOJA_REF" "$TODAY")";        check "emergência hoje → 201" 201 "$STATUS"; H2=$(echo "$BODY" | j id)
-call POST /harvests "$ANA" "$(H "$T1" "$MILHO_REF" 2026-02-15)";     check "segunda ativa no T1 → 409" 409 "$STATUS"; contains "código FIELD_HAS_ACTIVE_HARVEST" "$BODY" FIELD_HAS_ACTIVE_HARVEST
+call POST /harvests "$ANA" "$(H "$T2" "$SOJA_REF" "$TODAY")";        check "emergência hoje → 201" 201 "$STATUS"; H2=$(echo "$BODY" | j id); check "sem Ym → null" null "$(echo "$BODY" | j expectedYield)"
+call POST /harvests "$ANA" "$(H "$T1" "$C_ANA" 2026-02-15)";         check "segunda ativa no T1 → 409" 409 "$STATUS"; contains "código FIELD_HAS_ACTIVE_HARVEST" "$BODY" FIELD_HAS_ACTIVE_HARVEST
 call POST /harvests "$ADMIN" "$(H "$TB" "$C_BIA" 2025-10-20)";       check "admin cria com cultivar da Bia no talhão da Bia → 201" 201 "$STATUS"; HB=$(echo "$BODY" | j id)
 
 echo "== Safras: criações simultâneas =="
@@ -174,10 +184,13 @@ call PATCH "/harvests/$H1" "$PEDRO" '{"notes":"x"}';                 check "prod
 call PATCH "/harvests/$HB" "$ANA" '{"notes":"x"}';                   check "fora do escopo → 404" 404 "$STATUS"
 call PATCH "/harvests/$H1" "$ANA" '{}';                              check "corpo vazio → 400" 400 "$STATUS"
 call PATCH "/harvests/$H1" "$ANA" '{"emergenceDate":"2025-11-11"}';  check "emergenceDate imutável → 400" 400 "$STATUS"; contains "aponta emergenceDate" "$BODY" '"emergenceDate"'
-call PATCH "/harvests/$H1" "$ANA" "{\"cultivarId\":\"$MILHO_REF\"}"; check "cultivarId imutável → 400" 400 "$STATUS"
+call PATCH "/harvests/$H1" "$ANA" "{\"cultivarId\":\"$C_ANA\"}";    check "cultivarId imutável → 400" 400 "$STATUS"
 call PATCH "/harvests/$H1" "$ANA" '{"notes":"Revisada","season":"2025/26"}'; check "notes e season → 200" 200 "$STATUS"; check "notes" Revisada "$(echo "$BODY" | j notes)"
+call PATCH "/harvests/$H2" "$ANA" '{"expectedYield":70}';            check "PATCH expectedYield → 200" 200 "$STATUS"; check "expectedYield 70" 70 "$(echo "$BODY" | j expectedYield)"
+call PATCH "/harvests/$H2" "$ANA" '{"expectedYield":-5}';            check "expectedYield -5 → 400" 400 "$STATUS"; contains "aponta expectedYield" "$BODY" '"expectedYield"'
+call PATCH "/harvests/$H2" "$ANA" '{"expectedYield":null}';          check "expectedYield null limpa → 200" 200 "$STATUS"; check "expectedYield null" null "$(echo "$BODY" | j expectedYield)"
 call PATCH "/harvests/$H1" "$ANA" '{"status":"COMPLETED"}';          check "conclusão → 200" 200 "$STATUS"; check "COMPLETED" COMPLETED "$(echo "$BODY" | j status)"
-call POST /harvests "$ANA" "$(H "$T1" "$MILHO_REF" 2026-02-15)";     check "nova safra após conclusão → 201" 201 "$STATUS"; H3=$(echo "$BODY" | j id)
+call POST /harvests "$ANA" "$(H "$T1" "$C_ANA" 2026-02-15)";         check "nova safra após conclusão → 201" 201 "$STATUS"; H3=$(echo "$BODY" | j id)
 call PATCH "/harvests/$H1" "$ANA" '{"status":"ACTIVE"}';             check "reativar H1 com H3 ativa → 409" 409 "$STATUS"; contains "código FIELD_HAS_ACTIVE_HARVEST" "$BODY" FIELD_HAS_ACTIVE_HARVEST
 call PATCH "/harvests/$H3" "$ANA" '{"status":"CANCELLED"}';          check "cancelar H3 → 200" 200 "$STATUS"
 call PATCH "/harvests/$H1" "$ANA" '{"status":"ACTIVE"}';             check "reativar H1 sem outra ativa → 200" 200 "$STATUS"; check "ACTIVE" ACTIVE "$(echo "$BODY" | j status)"
@@ -185,16 +198,32 @@ call PATCH "/harvests/$H1" "$ANA" '{"status":"ACTIVE"}';             check "mesm
 call PATCH "/harvests/$H3" "$ADMIN" '{"status":"ACTIVE"}';           check "admin reativa H3 com H1 ativa → 409" 409 "$STATUS"
 call GET "/harvests?fieldId=$T1&status=CANCELLED" "$ANA"; check "T1 tem 1 cancelada" 1 "$(echo "$BODY" | j length)"
 
-echo "== Cultivar em uso =="
-call PATCH "/cultivars/$C_BIA" "$BIA" '{"kcMid":1.0}';               check "parâmetro com safra ativa → 409" 409 "$STATUS"; contains "código CULTIVAR_IN_USE" "$BODY" CULTIVAR_IN_USE; contains "cita kcMid" "$BODY" kcMid
-call PATCH "/cultivars/$C_BIA" "$BIA" '{"kcMid":1.1}';               check "mesmo valor atual → 409" 409 "$STATUS"
-call PATCH "/cultivars/$C_BIA" "$BIA" '{"name":"Soja da Bia v1","kyF3":0.9}'; check "corpo misto → 409" 409 "$STATUS"; contains "cita kyF3" "$BODY" kyF3
-check "nome não alterado no corpo misto" "Soja da Ana" "$(sql "SELECT name FROM cultivars WHERE id='$C_BIA'")"
-call PATCH "/cultivars/$C_BIA" "$BIA" '{"name":"Soja da Bia","cycleDescription":"Precoce"}'; check "name e cycleDescription em uso → 200" 200 "$STATUS"; check "nome novo" "Soja da Bia" "$(echo "$BODY" | j name)"
+echo "== Cultivar em uso: edição liberada, exclusão bloqueada =="
+call PATCH "/cultivars/$C_BIA" "$BIA" '{"kcMid":1.0}';               check "parâmetro com safra ativa → 200" 200 "$STATUS"; check "kcMid 1.0" 1 "$(echo "$BODY" | j kcMid)"
+call PATCH "/cultivars/$C_BIA" "$BIA" '{"name":"Soja da Bia","kyF3":0.9}'; check "corpo misto → 200" 200 "$STATUS"; check "nome novo" "Soja da Bia" "$(echo "$BODY" | j name)"
 call PATCH "/harvests/$HB" "$BIA" '{"status":"COMPLETED"}'
-call PATCH "/cultivars/$C_BIA" "$BIA" '{"gdaTotal":1250}';          check "safra histórica também congela → 409" 409 "$STATUS"; contains "código CULTIVAR_IN_USE" "$BODY" CULTIVAR_IN_USE
+call PATCH "/cultivars/$C_BIA" "$BIA" '{"gdaTotal":1250}';          check "safra histórica também edita → 200" 200 "$STATUS"
+call PATCH "/cultivars/$C_BIA" "$BIA" '{"gdaF3End":1300}';          check "relação cruzada continua validada → 400" 400 "$STATUS"; contains "aponta gdaF3End" "$BODY" '"gdaF3End"'
 call DELETE "/cultivars/$C_BIA" "$BIA";                              check "excluir em uso → 409" 409 "$STATUS"; contains "código CULTIVAR_IN_USE" "$BODY" CULTIVAR_IN_USE
-call PATCH "/cultivars/$C_ANA" "$ANA" '{"kcMid":1.0}';               check "sem safras: parâmetro editável → 200" 200 "$STATUS"; check "kcMid 1.0" 1 "$(echo "$BODY" | j kcMid)"
+
+echo "== Sincronização com a referência =="
+# C_ANA foi criada com kcMid 1.1 (≠ ref 1.15) e kyF1 0.2 (= ref). Simula a referência mudando tBase 10 → 12.
+call PATCH "/cultivars/$C_ANA" "$ANA" '{"kcMid":1.1}' >/dev/null
+sql "UPDATE cultivars SET t_base = 12 WHERE id='$SOJA_REF'" >/dev/null
+call POST "/cultivars/$C_ANA/sync-reference" "$PEDRO" '{"mode":"unchanged"}'; check "produtor sincroniza → 403" 403 "$STATUS"
+call POST "/cultivars/$C_ANA/sync-reference" "$BIA" '{"mode":"unchanged"}';   check "outra agrônoma → 404" 404 "$STATUS"
+call POST "/cultivars/$SOJA_REF/sync-reference" "$ADMIN" '{"mode":"all"}';    check "referência → 403 DEFAULT_CULTIVAR_READONLY" 403 "$STATUS"; contains "código" "$BODY" DEFAULT_CULTIVAR_READONLY
+call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{}';                     check "mode ausente → 400" 400 "$STATUS"; contains "aponta mode" "$BODY" '"mode"'
+call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{"mode":"partial"}';     check "mode inválido → 400" 400 "$STATUS"
+call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{"mode":"unchanged"}';   check "unchanged → 200" 200 "$STATUS"
+check "tBase atualizado, kcMid preservado" "12|1.1" "$(echo "$BODY" | j tBase)|$(echo "$BODY" | j kcMid)"
+check "updatedFields = [tBase]" '["tBase"]' "$(echo "$BODY" | j updatedFields)"
+check "referenceSnapshot.tBase = 12" 12 "$(echo "$BODY" | j referenceSnapshot.tBase)"
+call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{"mode":"unchanged"}';   check "nada a atualizar → updatedFields []" '[]' "$(echo "$BODY" | j updatedFields)"
+call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{"mode":"all"}';         check "all → 200" 200 "$STATUS"
+contains "all atualiza kcMid" "$(echo "$BODY" | j updatedFields)" kcMid
+check "15 parâmetros iguais à referência" "12|1200|1.15|0.95" "$(echo "$BODY" | j tBase)|$(echo "$BODY" | j gdaTotal)|$(echo "$BODY" | j kcMid)|$(echo "$BODY" | j zrMax)"
+sql "UPDATE cultivars SET t_base = 10 WHERE id='$SOJA_REF'" >/dev/null   # repõe a referência do seed
 
 echo "== Exclusão de talhão com safras =="
 call DELETE "/properties/$P/fields/$T1" "$ANA";  check "talhão com safra ativa → 409" 409 "$STATUS"; contains "código FIELD_HAS_ACTIVE_HARVEST" "$BODY" FIELD_HAS_ACTIVE_HARVEST

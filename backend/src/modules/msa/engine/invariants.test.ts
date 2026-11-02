@@ -1,8 +1,10 @@
 import type { Cultivar } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
+import * as engine from './index';
 import { mulberry32, uniform } from './test-fixtures';
 import type { CultivarParams, DailyWeather, SoilParams } from './types';
 import { runDailyBalance } from './water-balance';
+import { cycleYieldIndex, summarizeByPhase } from './yield';
 
 const CASES = 200;
 
@@ -53,7 +55,7 @@ function randomSeries(rand: () => number, n: number): DailyWeather[] {
 }
 
 describe('invariantes do motor com entradas aleatórias (semente fixa)', () => {
-  it(`${CASES} casos: 0 ≤ Ks ≤ 1, ETc_adj ≤ ETc, 0 ≤ Dr ≤ TAW, Zr e GDA não decrescentes, ET₀ ≥ 0`, () => {
+  it(`${CASES} casos: 0 ≤ Ks ≤ 1, ETc_adj ≤ ETc, 0 ≤ Dr ≤ TAW, Zr e GDA não decrescentes, ET₀ ≥ 0, 0 ≤ índice ≤ 1`, () => {
     const rand = mulberry32(20261005);
     let rowsChecked = 0;
 
@@ -83,16 +85,33 @@ describe('invariantes do motor com entradas aleatórias (semente fixa)', () => {
         prevGda = row.gdaAccum;
         rowsChecked++;
       }
+
+      const { yieldIndex, phasesReached } = cycleYieldIndex(summarizeByPhase(rows, cultivar));
+      expect(yieldIndex).toBeGreaterThanOrEqual(0);
+      expect(yieldIndex).toBeLessThanOrEqual(1);
+      expect(phasesReached).toBeGreaterThanOrEqual(0);
+      expect(phasesReached).toBeLessThanOrEqual(4);
     }
 
     expect(rowsChecked).toBeGreaterThan(CASES * 20);
   });
 });
 
+describe('motor determinístico', () => {
+  it('não exporta PRNG, Monte Carlo nem cenários', () => {
+    const exported = engine as Record<string, unknown>;
+    for (const name of ['mulberry32', 'sampleNormal', 'uniform', 'runMonteCarlo', 'percentile', 'generateDecisionScenarios']) {
+      expect(exported[name]).toBeUndefined();
+    }
+    expect(typeof engine.cycleYieldIndex).toBe('function');
+    expect(typeof engine.predictedYield).toBe('function');
+  });
+});
+
 describe('compatibilidade de tipos com o Prisma', () => {
   it('um registro Cultivar satisfaz CultivarParams sem conversão', () => {
     const fromDb = {
-      id: 'x', name: 'Soja', crop: 'SOJA', cycleDescription: null, isDefault: true, createdById: null,
+      id: 'x', name: 'Soja', crop: 'SOJA', cycleDescription: null, isDefault: true, createdById: null, referenceSnapshot: null,
       createdAt: new Date(), updatedAt: new Date(),
       tBase: 10, gdaTotal: 1200, gdaF1End: 120, gdaF2End: 450, gdaF3End: 900,
       kcIni: 0.2, kcMid: 1.15, kcEnd: 0.5, depletionFraction: 0.5, zrIni: 0.3, zrMax: 0.95,

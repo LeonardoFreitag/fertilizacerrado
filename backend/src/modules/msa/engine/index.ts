@@ -9,7 +9,7 @@
  * muda para a mesma entrada (ex.: adotar dia local); major quando a interface
  * muda.
  */
-export const ENGINE_VERSION = '1.0.0';
+export const ENGINE_VERSION = '2.0.0';
 
 export * from './types';
 export * from './gda';
@@ -18,6 +18,3 @@ export * from './et0';
 export * from './kc';
 export * from './water-balance';
 export * from './yield';
-export * from './random';
-export * from './monte-carlo';
-export * from './decision';

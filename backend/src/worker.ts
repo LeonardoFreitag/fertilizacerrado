@@ -34,9 +34,9 @@ const connection = queueConnectionOptions();
 const processWorker = new Worker<ProcessJobData>(
   QUEUES.process,
   async (job) => {
-    const { harvestId, seed, reason } = job.data;
+    const { harvestId, reason } = job.data;
     log(`msa-process ${job.id}: safra ${harvestId} (${reason})`);
-    const result = await msaService.processHarvestAsSystem(harvestId, { seed, reason, jobId: String(job.id) });
+    const result = await msaService.processHarvestAsSystem(harvestId, { reason, jobId: String(job.id) });
     log(`msa-process ${job.id}: run ${result.run.id} ${result.run.status}`);
     return { runId: result.run.id, status: result.run.status, dateTo: result.run.dateTo };
   },

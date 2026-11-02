@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Verificar se as implementações de ET₀ (FAO-56 Penman-Monteith), balanço hídrico e Monte Carlo produzem resultados consistentes com ferramentas de referência reconhecidas internacionalmente, especialmente o **CROPWAT 8.0** da FAO.
+Verificar se as implementações de ET₀ (FAO-56 Penman-Monteith), balanço hídrico e predição de produtividade (índice do ciclo FAO-33) produzem resultados consistentes com ferramentas de referência reconhecidas internacionalmente, especialmente o **CROPWAT 8.0** da FAO, e com a produtividade observada em safras históricas.
 
 > Este protocolo serve como base metodológica para a seção de validação da dissertação de Heb Rejane Moreira Pires.
 
@@ -87,35 +87,25 @@ $$PBIAS = \frac{\sum_{i=1}^{n}(O_i - S_i)}{\sum_{i=1}^{n} O_i} \times 100\%$$
 
 ---
 
-### Caso 2 — Validação de Balanço Hídrico com Safra Histórica
+### Caso 2 — Validação de Balanço Hídrico e Produtividade com Safra Histórica
 
 **Procedimento:**
-1. Selecionar uma safra de soja com data de emergência, cultivar e dados de solo conhecidos
+1. Selecionar uma safra de soja com data de emergência, cultivar e dados de solo conhecidos; sempre que possível, com a **produtividade potencial** ($Y_m$, informada na safra como `expectedYield`, sc/ha) e a **produtividade observada** (colhida) registradas
 2. Usar os dados ERA5-Land do período da safra como entrada
 3. Executar o balanço hídrico no MSA
 4. Executar o mesmo balanço no CROPWAT 8.0 (módulo Soil Water Balance)
 5. Comparar $Dr_d$ e $Ks_d$ diários com RMSE e NSE
+6. Quando a safra histórica tem produtividade observada, comparar a **produtividade predita** da run (`predictedYield` = $Y_m \times$ índice do ciclo, `docs/msa/algoritmos.md` §6) com a observada pelo **erro relativo**:
 
-**Critério de aceitação:** NSE ≥ 0,80 para $Dr_d$
+   $$E_{rel} = \frac{Y_{predita} - Y_{observada}}{Y_{observada}}$$
+
+   Implementado em `relativeError()` (`backend/scripts/validation/metrics.ts`). Registrar no relatório, para cada safra, $Y_m$, o índice do ciclo, `phasesReached`, $Y_{predita}$, $Y_{observada}$ e $E_{rel}$.
+
+**Critério de aceitação:** NSE ≥ 0,80 para $Dr_d$. Para a produtividade, **não há critério de aceitação fixo nesta etapa**: o erro relativo é registrado no relatório e serve para discutir a aderência do índice FAO-33 nas safras disponíveis (a predição é um valor único, sem faixa de incerteza — ver limitação em `algoritmos.md` §6).
 
 ---
 
-### Caso 3 — Validação do Monte Carlo
-
-**Procedimento:**
-1. Verificar a convergência dos percentis com 100, 500 e 1.000 iterações:
-   ```bash
-   cd backend
-   pnpm msa:validate-mc -- dados/safra-era5.csv --cultivar soja --altitude 741 --seed 2026
-   pnpm msa:validate-mc -- --synthetic 150 --cultivar soja          # sem dados ERA5: série sintética de referência
-   ```
-   O script (`backend/scripts/validation/mc-validate.ts`) roda as três contagens **com a mesma semente** (as primeiras 500 iterações são idênticas; mede-se só o efeito das adicionais) e imprime, por janela, o P50 do Ks médio nas três contagens, a variação relativa, P10/P90 a 1.000 iterações, o baseline e o número de iterações válidas. `--out` grava os números em CSV. O CSV de clima tem `date, tmax, tmin, [tmean], tdew, u2, rn, precipitation`; `backend/scripts/validation/examples/synthetic-cerrado-season.csv` é a série sintética de 150 dias (semente 2026), também usada pelo teste automatizado de convergência.
-2. Garantir que a diferença entre P50 (500 iter.) e P50 (1.000 iter.) seja < 0,5 % em toda janela com dias — o script aplica o critério
-3. Verificar se as perturbações geram distribuição normal esperada (teste Shapiro-Wilk, p > 0,05) — fica para o relatório em Python (`validation_report.py`); o motor usa Box-Muller com média e desvio verificados em 100 mil sorteios pelos testes unitários
-
-**Critério de aceitação:** variação de P50 entre 500 e 1.000 iterações < 0,5%
-
-**Resultado obtido com a série sintética (semente 2026, soja):** F1 e F2 sem estresse (P50 = 1); F3 P50 0,971 (variação 0,11 %); F4 P50 0,922 (variação 0,05 %). Repetir com várias sementes e com séries ERA5 reais para o relatório.
+> **Caso 3 (convergência do Monte Carlo) removido em 2026-11-02.** O módulo estocástico saiu do motor com a redefinição do objetivo do MSA para predição de produtividade (ver `docs/msa/questoes-abertas.md`, registro da reunião com o professor Adilson). A numeração do Caso 4 foi mantida para não quebrar referências no roteiro e no manual.
 
 ---
 
@@ -160,7 +150,7 @@ docs/msa/validation_results/
 ├── et0_cropwat_comparison.csv
 ├── et0_scatter_plot.png
 ├── water_balance_timeseries.png
-├── monte_carlo_convergence.png
+├── yield_predicted_vs_observed.csv
 └── qm_bias_correction.png
 ```
 
@@ -171,7 +161,6 @@ docs/msa/validation_results/
 | Etapa | Quando | Responsável |
 |---|---|---|
 | Validação ET₀ (Caso 1) | Após implementação de `et0.calculator.ts` | Heb + dev |
-| Validação balanço hídrico (Caso 2) | Após implementação de `water-balance.calculator.ts` | Heb + dev |
-| Validação Monte Carlo (Caso 3) | Motor pronto (`engine/monte-carlo.ts`); repetir com séries ERA5 reais quando o ETL existir | Dev + Heb |
+| Validação balanço hídrico e produtividade predita × observada (Caso 2) | Motor pronto (`engine/water-balance.ts`, `engine/yield.ts`); exige safras históricas com produtividade observada | Heb + dev |
 | Validação QM (Caso 4) | Após implementação de `era5_bias_correct.py` | Heb + dev |
 | Relatório final de validação | Antes da defesa da dissertação | Heb |

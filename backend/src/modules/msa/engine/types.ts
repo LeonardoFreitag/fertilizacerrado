@@ -140,104 +140,15 @@ export interface PhaseSummary {
 }
 
 // ---------------------------------------------------------------------------
-// Monte Carlo (`docs/msa/algoritmos.md` §7)
+// Índice de produtividade do ciclo (`docs/msa/algoritmos.md` §6)
 // ---------------------------------------------------------------------------
 
-export interface MonteCarloOptions {
-  /** Iterações (padrão 1000) */
-  iterations?: number;
-  /** Semente do PRNG — obrigatória; quem persistir o resultado deve gravá-la */
-  seed: number;
-  /** Desvio-padrão do fator multiplicativo da precipitação (padrão 0,30) */
-  sigmaPrecip?: number;
-  /** Desvio-padrão do deslocamento térmico, °C (padrão 0,6) */
-  sigmaTemp?: number;
-  altitude: number;
-  initialDepletion?: number;
-}
-
-/** Percentis tipo 7 (interpolação linear; R `quantile` type 7 / NumPy `linear`). */
-export interface Percentiles {
-  p10: number;
-  p50: number;
-  p90: number;
-}
-
-export interface PhasePercentiles {
-  phase: YieldPhase;
-  /** Iterações em que a janela teve dias; percentis calculados só sobre elas */
-  validIterations: number;
-  ksMean: Percentiles | null;
-  yieldReductionPct: Percentiles | null;
-  etcAdjAccum: Percentiles | null;
-}
-
-export interface MonteCarloResult {
-  iterations: number;
-  seed: number;
-  sigmaPrecip: number;
-  sigmaTemp: number;
-  /** Resumo por janela sem perturbação */
-  baseline: PhaseSummary[];
-  /** Balanço diário sem perturbação — entrada do cenário de parcelamento */
-  baselineSeries: DailyBalanceRow[];
-  phases: PhasePercentiles[];
-}
-
-// ---------------------------------------------------------------------------
-// Cenários de decisão (`docs/msa/algoritmos.md` §8)
-// ---------------------------------------------------------------------------
-
-export interface DecisionInput {
-  /** Janela atual ou recém-encerrada */
-  phase: YieldPhase;
-  /** P50 do Ks médio da janela (Monte Carlo) */
-  ksP50: number;
-  baselineSeries: ReadonlyArray<DailyBalanceRow>;
-  cultivar: CultivarParams;
-  /** Dose planejada do insumo (unidade do técnico, ex.: kg/ha) */
-  doseBase: number;
-  /** Eficiência de uso do nutriente planejada (0–1) */
-  efficiencyBase: number;
-}
-
-/** (a) Redução de dose proporcional ao Ks mediano. */
-export interface ScenarioA {
-  doseBase: number;
-  ksP50: number;
-  doseAdjusted: number;
-  reductionPct: number;
-  rationale: string;
-}
-
-/** (b) Parcelamento pela razão de ETc das duas metades da janela seguinte. */
-export interface ScenarioB {
-  nextPhase: YieldPhase;
-  days1: number;
-  days2: number;
-  etc1: number;
-  etc2: number;
-  fraction1: number;
-  fraction2: number;
-  dose1: number;
-  dose2: number;
-  rationale: string;
-}
-
-/** (c) Fator de eficiência proporcional ao Ks mediano. */
-export interface ScenarioC {
-  efficiencyBase: number;
-  ksP50: number;
-  efficiencyAdjusted: number;
-  rationale: string;
-}
-
-export interface DecisionScenarios {
-  phase: YieldPhase;
-  ksP50: number;
-  a: ScenarioA;
-  b: ScenarioB | null;
-  /** Preenchido quando `b` é null */
-  bUnavailableReason: string | null;
-  c: ScenarioC;
+/** Combinação multiplicativa das janelas (FAO-33) — resultado de `cycleYieldIndex`. */
+export interface CycleYield {
+  /** Π_j (1 − Ky_j · (1 − Ks̄_j)) sobre as janelas alcançadas; em [0, 1] */
+  yieldIndex: number;
+  /** Janelas com dias na série (0–4); janela não alcançada entra com fator 1 */
+  phasesReached: number;
+  /** Fator de cada janela F1–F4 (1 quando não alcançada) */
+  factors: [number, number, number, number];
 }

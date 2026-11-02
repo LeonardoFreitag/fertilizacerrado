@@ -3,7 +3,9 @@
 > **Audiência:** Heb Rejane Moreira Pires (pesquisadora), orientadores, banca avaliadora.  
 > **Objetivo:** Rastreabilidade completa entre as equações descritas na dissertação e o código TypeScript implementado.
 
-> **Onde está o código:** o motor de cálculo é a biblioteca de funções puras `backend/src/modules/msa/engine/` (sem banco, API ou ERA5-Land), exportada por `engine/index.ts`. Cada função tem JSDoc com a fonte e o número da equação. Os tipos (`CultivarParams`, `SoilParams`, `DailyWeather`, `DailyBalanceRow`, `PhaseSummary`, `MonteCarloResult`, `DecisionScenarios`) estão em `engine/types.ts`. As seções 1 a 8 estão implementadas; a persistência dos resultados, a fila de jobs e os endpoints ainda não.
+> **Onde está o código:** o motor de cálculo é a biblioteca de funções puras `backend/src/modules/msa/engine/` (sem banco, API ou ERA5-Land), exportada por `engine/index.ts`. Cada função tem JSDoc com a fonte e o número da equação. Os tipos (`CultivarParams`, `SoilParams`, `DailyWeather`, `DailyBalanceRow`, `PhaseSummary`, `CycleYield`) estão em `engine/types.ts`. As seções 1 a 6 estão implementadas no motor (`ENGINE_VERSION` 2.0.0, determinístico: uma execução do balanço por run); a persistência dos resultados, a fila de jobs e os endpoints estão descritos em `docs/modulos/msa.md`.
+
+> **Escopo (desde 2026-11-02):** o MSA prediz a produtividade da soja frente à produtividade potencial informada por safra. O módulo de Monte Carlo (antiga seção 7) e os cenários de decisão de adubação (antiga seção 8) foram removidos — ver `docs/msa/questoes-abertas.md`, registro da reunião com o professor Adilson.
 
 ---
 
@@ -21,7 +23,7 @@ $$GDA_{acum} = \sum_{d=1}^{D} GDA_d$$
 **Onde:**
 - $T_{max,d}$ = temperatura máxima do dia *d* (°C), fonte ERA5-Land (`2m_temperature_max`)
 - $T_{min,d}$ = temperatura mínima do dia *d* (°C), fonte ERA5-Land (`2m_temperature_min`)
-- $T_{base}$ = temperatura-base da cultura (soja: **10°C**; milho: **10°C**)
+- $T_{base}$ = temperatura-base da cultura (soja: **10°C**; única cultura da Fase 1)
 - $GDA_{acum}$ = graus-dia acumulados desde a data de emergência
 
 ### Referência bibliográfica
@@ -196,101 +198,80 @@ $$ETc_{adj} = Ks \cdot ETc$$
 **Semântica do passo diário adotada no motor:** para cada dia, (1) GDA do dia e acumulado → fase, Zr e Kc; (2) TAW e RAW pelo Zr do dia — ao aprofundar a raiz, TAW cresce e a depleção **não** é alterada; (3) Ks com a depleção do **início** do dia; ET₀, ETc = Kc·ET₀, ETc_adj = Ks·ETc; (4) Dr_d = clamp(Dr_{d−1} − P_d + ETc_adj, 0, TAW) — chuva acima da depleção zera Dr (excedente = percolação). Depleção inicial configurável (padrão 0 = capacidade de campo).
 
 ### Implementação
-`src/modules/msa/engine/water-balance.ts` → `totalAvailableWater(thetaFC, thetaWP, zr)` (Eq. 82), `readilyAvailableWater(p, taw)` (Eq. 83), `stressCoefficient(dr, taw, raw)` (Eq. 84) e `runDailyBalance(days, cultivar, soil, { altitude, initialDepletion })`, que devolve por dia `{ date, phase, gda, gdaAccum, zr, et0, kc, etc, precipitation, dr, ks, etcAdj, taw, raw }`. Determinístico e sem alocação intermediária (projetado para as 1.000 iterações do Monte Carlo).
+`src/modules/msa/engine/water-balance.ts` → `totalAvailableWater(thetaFC, thetaWP, zr)` (Eq. 82), `readilyAvailableWater(p, taw)` (Eq. 83), `stressCoefficient(dr, taw, raw)` (Eq. 84) e `runDailyBalance(days, cultivar, soil, { altitude, initialDepletion })`, que devolve por dia `{ date, phase, gda, gdaAccum, zr, et0, kc, etc, precipitation, dr, ks, etcAdj, taw, raw }`. Determinístico e sem alocação intermediária; executado uma vez por run.
 
 ---
 
-## 6. Redução de Produtividade por Estresse Hídrico
+## 6. Redução de Produtividade por Estresse Hídrico e Predição de Produtividade
 
-$$\frac{ETc_{adj}}{ETc} = 1 - Ky \cdot \left(1 - \frac{ETa}{ETc}\right)$$
+### 6.1 Redução por janela fenológica
 
-Simplificando para uso por janela fenológica:
+Equação 3.2 do FAO-33 (resposta da produtividade à água):
+
+$$1 - \frac{Y_a}{Y_m} = Ky \cdot \left(1 - \frac{ET_a}{ET_m}\right)$$
+
+Simplificando para uso por janela fenológica, com $ET_a/ET_m \approx \overline{Ks}_j$ (pois $ETc_{adj} = Ks \cdot ETc$, §5):
 
 $$RY_j = Ky_j \cdot (1 - \overline{Ks}_j)$$
 
 **Onde:**
+- $Y_a$ = produtividade real (atual) da cultura
+- $Y_m$ = produtividade máxima (potencial) da cultura, sem restrição hídrica
 - $RY_j$ = redução relativa de produtividade na janela $j$ (decimal, 0–1)
-- $Ky_j$ = coeficiente de sensibilidade ao estresse da janela $j$
-- $\overline{Ks}_j$ = Ks médio observado durante a janela $j$
+- $Ky_j$ = coeficiente de sensibilidade ao estresse da janela $j$ (tabela da §2)
+- $\overline{Ks}_j$ = Ks médio dos dias da janela $j$
+
+### 6.2 Índice de produtividade do ciclo (combinação das janelas)
+
+Para déficits hídricos em estádios sucessivos, o FAO-33 combina as reduções de cada estádio de forma **multiplicativa**: a produtividade relativa do ciclo é o produto das produtividades relativas das janelas.
+
+$$\frac{Y_a}{Y_m} = \prod_{j=1}^{4} \left[1 - Ky_j \cdot (1 - \overline{Ks}_j)\right] = \prod_{j=1}^{4} (1 - RY_j)$$
+
+O resultado é o **índice de produtividade do ciclo** (`yieldIndex`, adimensional, 0–1). O fator de cada janela, $1 - RY_j$, vale 1 quando não houve estresse ($\overline{Ks}_j = 1$) e decresce com o estresse ponderado pela sensibilidade $Ky_j$.
+
+### 6.3 Produtividade predita
+
+$$Y_a = Y_m \times \frac{Y_a}{Y_m} = Y_m \times \text{índice do ciclo}$$
+
+**Convenções adotadas no motor:**
+
+- **$Y_m$ é informada por safra** pelo agrônomo (campo `expectedYield`, sc/ha, > 0 e ≤ 250 como teto de sanidade). A run grava o valor vigente no momento do processamento; alterar a $Y_m$ da safra depois **não** recalcula a run — para refletir o novo valor, reprocessa-se a safra. Sem $Y_m$, a run grava o índice do ciclo e a produtividade predita fica nula.
+- **Janela não alcançada conta como fator 1.** Uma janela sem dias (a safra ainda não chegou nela) entra no produto com $1 - RY_j = 1$, isto é, a predição **considera o restante do ciclo sem estresse**. O número de janelas com dias é `phasesReached` (0–4); enquanto `phasesReached < 4` (ou a última janela ainda não terminou), a predição é parcial e o painel avisa. Como as janelas são contíguas, `phasesReached` é também o índice da última janela alcançada.
+- **Predição retrospectiva e semanal.** O índice é recalculado a cada processamento (lote semanal do ERA5-Land, lag de ~5 dias) e só muda quando novas janelas são alcançadas ou quando o Ks̄ de uma janela em curso se atualiza.
+- **Sem faixa de incerteza (limitação).** A produtividade predita é um **valor único**: o motor não propaga a incerteza climática nem a do modelo. A avaliação de uma faixa de incerteza (por exemplo, por perturbação da série ou por ensemble) fica para trabalho futuro; nas safras históricas, o erro relativo predita × observada (`validacao.md`, Caso 2) é a medida disponível da qualidade da predição.
+- **Fatores truncados em [0, 1]** e `RangeError` para $Y_m \le 0$ ou índice fora de [0, 1] — entradas assim indicam erro a montante, não um resultado.
+
+### 6.4 Exemplo numérico
+
+Safra com F1 e F4 sem estresse, F2 com $\overline{Ks} = 0{,}90$ ($Ky = 0{,}8$) e F3 com $\overline{Ks} = 0{,}80$ ($Ky = 1{,}0$), $Y_m = 65$ sc/ha:
+
+| Janela | $\overline{Ks}_j$ | $Ky_j$ | $RY_j = Ky_j (1 - \overline{Ks}_j)$ | Fator $1 - RY_j$ |
+|---|---|---|---|---|
+| F1 | 1,00 | 0,20 | 0,00 | 1,00 |
+| F2 | 0,90 | 0,80 | 0,08 | 0,92 |
+| F3 | 0,80 | 1,00 | 0,20 | 0,80 |
+| F4 | 1,00 | 0,40 | 0,00 | 1,00 |
+
+$$\text{índice do ciclo} = 1{,}00 \times 0{,}92 \times 0{,}80 \times 1{,}00 = 0{,}736$$
+
+$$Y_a = 65 \times 0{,}736 = 47{,}84\ \text{sc/ha}$$
+
+Se a mesma safra estivesse ainda em F3 (`phasesReached = 3`), F4 entraria com fator 1 e o resultado seria o mesmo 47,84 sc/ha, marcado como predição parcial.
 
 ### Referência bibliográfica
-> DOORENBOS, J.; KASSAM, A.H. (1979). *Yield response to water*. FAO Irrigation and Drainage Paper No. 33. Rome: FAO. Equação 3.2.
+> DOORENBOS, J.; KASSAM, A.H. (1979). *Yield response to water*. FAO Irrigation and Drainage Paper No. 33. Rome: FAO. Equação 3.2 (redução por estádio) e combinação multiplicativa para déficits em estádios sucessivos (Capítulo 3, *Yield response to water deficit in successive growth periods*).
 
 ### Implementação
-`src/modules/msa/engine/yield.ts` → `yieldReduction(ksMean, ky)` e `summarizeByPhase(series, cultivar)`, que devolve para F1–F4 `{ days, ksMean, etcAdjAccum, precipAccum, yieldReductionPct }` (janela não alcançada: `days = 0`, `ksMean` e `yieldReductionPct` nulos).
+`src/modules/msa/engine/yield.ts`:
 
----
+| Função | O que calcula |
+|---|---|
+| `yieldReduction(ksMean, ky)` | $RY_j$, truncado em [0, 1] (§6.1) |
+| `summarizeByPhase(series, cultivar)` | resumo F1–F4 `{ days, ksMean, etcAdjAccum, precipAccum, yieldReductionPct }`; janela não alcançada: `days = 0`, `ksMean` e `yieldReductionPct` nulos |
+| `cycleYieldIndex(summaries)` | `{ yieldIndex, phasesReached, factors }` — `factors[j] = 1 − yieldReductionPct_j / 100` nas janelas com dias, 1 nas demais; `yieldIndex = Π factors` (§6.2) |
+| `predictedYield(ym, yieldIndex)` | $Y_m \times$ índice, na unidade de $Y_m$ (§6.3) |
 
-## 7. Análise de Risco — Método de Monte Carlo
-
-### Objetivo
-Quantificar a incerteza climática das estimativas de Ks por janela fenológica, gerando perfis de risco P10/P50/P90.
-
-### Procedimento (1.000 iterações)
-
-Para cada iteração $i$:
-
-1. Perturbar a série de precipitação:
-$$P_{d,i} = P_d \cdot \left(1 + \varepsilon_P\right), \quad \varepsilon_P \sim \mathcal{N}(0;\ 0{,}30^2)$$
-
-2. Perturbar a série de temperatura:
-$$T_{d,i} = T_d + \varepsilon_T, \quad \varepsilon_T \sim \mathcal{N}(0;\ 0{,}6^2)\ \text{°C}$$
-
-3. Recalcular: ET₀ → ETc → Balanço hídrico → $\overline{Ks}_j$ por janela
-
-4. Registrar $\overline{Ks}_{j,i}$ para cada janela $j$
-
-**Após 1.000 iterações, para cada janela:**
-
-$$P10_j = \text{percentil}_{10}(\overline{Ks}_{j,i})$$
-$$P50_j = \text{mediana}(\overline{Ks}_{j,i})$$
-$$P90_j = \text{percentil}_{90}(\overline{Ks}_{j,i})$$
-
-### Justificativa dos parâmetros de perturbação
-- **±30% em precipitação:** representa a variabilidade interanual típica das chuvas do Cerrado (CV ~25–35% para estações chuvosas).  
-- **±0,6°C em temperatura:** corresponde à incerteza de reanálise reportada para ERA5-Land no Brasil tropical (Hersbach et al., 2020).
-
-### Convenções adotadas no motor
-
-- **Perturbação sistemática por iteração.** Em cada iteração *i* sorteiam-se, nesta ordem, um fator de precipitação $f_i = \max(0,\ 1 + \varepsilon_P)$ e um deslocamento térmico $\delta_i = \varepsilon_T$; $f_i$ multiplica a precipitação de **todos** os dias e $\delta_i$ soma-se a $T_{max}$, $T_{min}$ e $T_{med}$ de **todos** os dias ($T_{dew}$ e $R_n$ não mudam). Ou seja, $\varepsilon_P$ e $\varepsilon_T$ não variam com *d*. Motivo: a incerteza que se quer capturar é a de viés da reanálise sobre a janela e a variabilidade interanual, ambas correlacionadas no tempo; ruído diário independente com σ = 30 % se cancelaria em grande parte na soma de uma janela de 20–40 dias (o desvio da soma cresce com √n enquanto a soma cresce com n) e estreitaria o intervalo P10–P90. A variante mista (viés por iteração + ruído diário) está em aberto para decisão da pesquisadora.
-- **Truncamento.** $f_i$ é truncado em zero (com σ = 0,30, $P(f_i < 0) \approx 4 \cdot 10^{-4}$).
-- **Percentis tipo 7** (Hyndman & Fan, 1996): interpolação linear entre ordens, o padrão de R (`quantile`) e NumPy (`linear`), para que os números sejam reproduzíveis em qualquer ferramenta do relatório.
-- **Iterações válidas.** Se uma janela não é alcançada em alguma iteração ($\delta_i$ negativo reduz o GDA acumulado), seus percentis são calculados só sobre as iterações em que ela teve dias, e a contagem é informada.
-- **Reprodutibilidade.** PRNG mulberry32 com semente obrigatória e amostrador normal por Box-Muller sem estado adicional: mesma semente ⇒ mesmo resultado, em qualquer máquina.
-
-### Referência bibliográfica
-> METROPOLIS, N.; ULAM, S. (1949). The Monte Carlo method. *Journal of the American Statistical Association*, 44(247), 335–341.  
-> HERSBACH, H. et al. (2020). The ERA5 global reanalysis. *Quarterly Journal of the Royal Meteorological Society*, 146(730), 1999–2049.
-
-### Implementação
-`src/modules/msa/engine/monte-carlo.ts` → `runMonteCarlo(days, cultivar, soil, { iterations = 1000, seed, sigmaPrecip = 0.30, sigmaTemp = 0.6, altitude, initialDepletion })`, que devolve por janela F1–F4 `validIterations` e P10/P50/P90 de `ksMean`, `yieldReductionPct` e `etcAdjAccum`, além do baseline (resumo e série diária sem perturbação) e dos metadados. `percentile(sorted, p)` implementa o tipo 7. `src/modules/msa/engine/random.ts` → `mulberry32(seed)`, `sampleNormal(rand, mean, sd)`. Consome `runDailyBalance` e `summarizeByPhase`; 1.000 iterações de uma safra de 150 dias rodam em ~0,1 s.
-
-Validação (Caso 3 de `validacao.md`): `pnpm msa:validate-mc` compara o P50 por janela com 100/500/1.000 iterações; o job BullMQ que executará isso por safra (`monte-carlo.worker.ts`) ainda não existe.
-
----
-
-## 8. Cenários de Decisão
-
-Após o Monte Carlo, o sistema gera três cenários de intervenção baseados em $P50$ da janela fenológica atual ou encerrada:
-
-### Cenário (a) — Redução de Dose
-$$Dose_{adj} = Dose_{base} \times \overline{Ks}_{P50}$$
-
-### Cenário (b) — Parcelamento
-A dose é dividida entre duas operações. A proporção é calculada pela razão da ETc projetada nas duas metades da próxima janela:
-$$f_1 = \frac{ETc_{proj,1}}{ETc_{proj,1} + ETc_{proj,2}}, \quad f_2 = 1 - f_1$$
-$$Dose_1 = Dose_{base} \times f_1, \quad Dose_2 = Dose_{base} \times f_2$$
-
-### Cenário (c) — Fator de Eficiência
-Ajusta a eficiência de uso do nutriente proporcional ao estresse hídrico:
-$$Eficiência_{adj} = Eficiência_{base} \times \overline{Ks}_{P50}$$
-
-> A interpretação agronômica e a escolha do cenário são responsabilidade do técnico. O sistema documenta a decisão tomada e a justificativa.
-
-**Convenções adotadas no motor:** a "próxima janela" do cenário (b) é a seguinte à informada (F1→F2, F2→F3, F3→F4); para F4 não há parcelamento e o cenário vem nulo com o motivo. Os dias dessa janela na **série baseline** (sem perturbação) são divididos em duas metades consecutivas, a primeira com ⌈n/2⌉ dias, e $ETc_{proj}$ é a ETc (demanda potencial, $Kc \cdot ET_0$), não a ETc ajustada. Se a série não alcança a janela seguinte, ou a alcança com menos de 2 dias, o cenário também vem nulo com o motivo. Cada cenário traz uma frase de racional que descreve o cálculo; nenhum é recomendado.
-
-### Implementação
-`src/modules/msa/engine/decision.ts` → `generateDecisionScenarios({ phase, ksP50, baselineSeries, cultivar, doseBase, efficiencyBase })` devolve `{ a, b | null, bUnavailableReason, c }` com os números e os racionais; `nextPhase(phase)` dá a janela seguinte. O serviço que gravará a decisão do técnico (`decision.service.ts`) ainda não existe.
+O serviço (`src/modules/msa/msa.service.ts`, `runProcessing` → `yieldFields(cycle, expectedYield)`) chama `runDailyBalance` + `summarizeByPhase` + `cycleYieldIndex` uma vez por run e grava em `msa_runs` os campos `expectedYield` (snapshot da safra), `yieldIndex`, `phasesReached` e `predictedYield` (nulo sem $Y_m$). Os testes (`yield.test.ts`) cobrem os casos da especificação: índice 1 sem estresse; F3 0,70/Ky 1,0 → 0,70; o exemplo da §6.4 (0,736 e 47,84 sc/ha); janela não alcançada → fator 1 e `phasesReached` menor que 4; `invariants.test.ts` garante $0 \le$ `yieldIndex` $\le 1$.
 
 ---
 
@@ -304,6 +285,7 @@ $$Eficiência_{adj} = Eficiência_{base} \times \overline{Ks}_{P50}$$
 | $Kc$ | Coeficiente de cultura | adimensional |
 | $Ks$ | Coeficiente de estresse hídrico | 0–1 |
 | $Ky$ | Coeficiente de sensibilidade ao estresse | adimensional |
+| $RY_j$ | Redução relativa de produtividade na janela $j$ = $Ky_j (1 - \overline{Ks}_j)$ | 0–1 |
 | $GDA$ | Graus-dia acumulados | °C·dia |
 | $T_{base}$ | Temperatura-base da cultura | °C |
 | $TAW$ | Total de água disponível | mm |
@@ -313,7 +295,10 @@ $$Eficiência_{adj} = Eficiência_{base} \times \overline{Ks}_{P50}$$
 | $p$ | Fração de depleção permitida sem estresse | 0–1 |
 | $\theta_{FC}$ | Umidade volumétrica na capacidade de campo | m³/m³ |
 | $\theta_{WP}$ | Umidade volumétrica no ponto de murcha | m³/m³ |
-| $P10/P50/P90$ | Percentis do Monte Carlo | adimensional |
+| $Y_m$ | Produtividade potencial (máxima) da safra, informada pelo agrônomo (`expectedYield`) | sc/ha |
+| $Y_a$ | Produtividade predita = $Y_m \times$ índice do ciclo (`predictedYield`) | sc/ha |
+| índice do ciclo | $Y_a/Y_m = \prod_j (1 - RY_j)$ (`yieldIndex`) | 0–1 |
+| `phasesReached` | Número de janelas fenológicas alcançadas (com dias) na run | 0–4 |
 | $R_n$ | Saldo de radiação líquida | MJ/m²/dia |
 | $u_2$ | Velocidade do vento a 2 m | m/s |
 | $e_s$ | Pressão de vapor saturado | kPa |

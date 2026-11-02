@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeMetrics, meetsCriteria } from './metrics';
+import { computeMetrics, meetsCriteria, relativeError } from './metrics';
 
 describe('computeMetrics (validacao.md)', () => {
   const observed = [3.1, 4.2, 5.0, 3.8, 4.6];
@@ -32,5 +32,19 @@ describe('computeMetrics (validacao.md)', () => {
   it('rejeita séries de tamanhos diferentes ou vazias', () => {
     expect(() => computeMetrics([1], [1, 2])).toThrow(RangeError);
     expect(() => computeMetrics([], [])).toThrow(RangeError);
+  });
+});
+
+describe('relativeError (Caso 2 — produtividade predita × observada)', () => {
+  it('(predita − observada) / observada', () => {
+    expect(relativeError(47.84, 52)).toBeCloseTo(-0.08, 9);
+    expect(relativeError(52, 52)).toBe(0);
+    expect(relativeError(57.2, 52)).toBeCloseTo(0.1, 9);
+  });
+
+  it('observado ≤ 0 ou não finito ⇒ RangeError', () => {
+    expect(() => relativeError(47.84, 0)).toThrow(RangeError);
+    expect(() => relativeError(47.84, -1)).toThrow(RangeError);
+    expect(() => relativeError(NaN, 52)).toThrow(RangeError);
   });
 });

@@ -14,8 +14,6 @@ vi.mock('./msa.repository', () => ({
     dailyResults: vi.fn(),
     findRun: vi.fn(),
     listRuns: vi.fn(),
-    createDecision: vi.fn(),
-    listDecisions: vi.fn(),
   },
 }));
 vi.mock('../harvests/harvest.service', () => ({ harvestService: { getAccessible: vi.fn().mockResolvedValue({}) } }));
@@ -23,20 +21,21 @@ vi.mock('../harvests/harvest.service', () => ({ harvestService: { getAccessible:
 import { ENGINE_VERSION } from './engine';
 import { era5Repository } from './era5.repository';
 import { msaRepository } from './msa.repository';
-import { DEFAULT_SOIL, msaService, resolveInterval, snapshotCultivar, snapshotSoil } from './msa.service';
+import { cultivarChangedSinceRun, DEFAULT_SOIL, msaService, resolveInterval, snapshotCultivar, snapshotSoil, yieldFields } from './msa.service';
 
 const USER = { id: 'u1', role: 'AGRONOMO' as const };
-const SOJA = { ...referenceCultivar('SOJA'), id: 'c1', cycleDescription: null, isDefault: true, createdById: null, createdAt: new Date(), updatedAt: new Date() };
+const SOJA = { ...referenceCultivar('SOJA'), id: 'c1', cycleDescription: null, isDefault: true, createdById: null, referenceSnapshot: null, createdAt: new Date(), updatedAt: new Date() };
 const FIELD = { id: 'f1', name: 'T1', propertyId: 'p1', altitudeM: 741, thetaFC: 0.3, thetaWP: 0.14 };
 const SERIES = syntheticSeason(150, 2026); // 2025-11-01 … 2026-03-30
 const TODAY = new Date().toISOString().slice(0, 10);
 
-function harvest(overrides: Partial<{ field: typeof FIELD; emergence: string }> = {}) {
+function harvest(overrides: Partial<{ field: typeof FIELD; emergence: string; expectedYield: number | null; cultivar: typeof SOJA }> = {}) {
   return {
     id: 'h1', status: 'ACTIVE', latestRunId: null,
     emergenceDate: new Date(`${overrides.emergence ?? '2025-11-01'}T00:00:00Z`),
+    expectedYield: overrides.expectedYield === undefined ? 65 : overrides.expectedYield,
     field: overrides.field ?? FIELD,
-    cultivar: SOJA,
+    cultivar: overrides.cultivar ?? SOJA,
   };
 }
 
@@ -132,97 +131,161 @@ describe('msaService.processHarvest', () => {
     expect(era5.getDailySeriesForField).not.toHaveBeenCalled();
   });
 
-  it('série completa ⇒ SUCCEEDED com snapshots fiéis, 4 resumos e semente gravada', async () => {
+  it('série completa ⇒ SUCCEEDED com snapshots fiéis, 4 resumos, índice e produtividade predita', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
     era5.getDailySeriesForField.mockResolvedValue(SERIES);
-    const r = await msaService.processHarvest(USER, 'h1', { seed: 42 });
+    const r = await msaService.processHarvest(USER, 'h1');
     expect(r.run.status).toBe('SUCCEEDED');
-    expect(r.run.seed).toBe(42);
-    expect(r.run.iterations).toBe(1000);
-    expect(r.run.sigmaPrecip).toBe(0.3);
-    expect(r.run.engineVersion).toBe(ENGINE_VERSION);
+    expect(r.run.engineVersion).toBe('2.0.0');
     expect(r.run.cultivarSnapshot).toMatchObject({ id: 'c1', gdaTotal: 1200 });
     expect(r.run.soilSnapshot).toEqual({ thetaFC: 0.3, thetaWP: 0.14, altitudeM: 741, soilDefaults: false });
     expect(r.phases).toHaveLength(4);
     expect(r.currentPhase).toBe('COMPLETED');
-    const [, daily, summaries] = repo.createSucceededRun.mock.calls[0]!;
+    expect(r.run.expectedYield).toBe(65);
+    expect(r.run.phasesReached).toBe(4);
+    expect(r.run.yieldIndex).toBeGreaterThan(0);
+    expect(r.run.yieldIndex).toBeLessThanOrEqual(1);
+    expect(r.run.predictedYield).toBeCloseTo(65 * r.run.yieldIndex!, 9);
+    expect(r.phases![0]).not.toHaveProperty('percentiles');
+    expect(r.phases![0]).not.toHaveProperty('validIterations');
+    expect(r.run).not.toHaveProperty('seed');
+    const [created, daily, summaries] = repo.createSucceededRun.mock.calls[0]!;
+    expect(created).not.toHaveProperty('seed');
+    expect(created).not.toHaveProperty('iterations');
     expect(daily.length).toBeGreaterThan(60);
     expect(summaries.map((s) => s.phase)).toEqual(['F1', 'F2', 'F3', 'F4']);
+    expect(summaries[0]).not.toHaveProperty('ksMeanP50');
     expect(daily[0]!.date.toISOString().slice(0, 10)).toBe('2025-11-01');
   });
 
-  it('mesma semente e mesmos dados ⇒ resumos e série idênticos', async () => {
+  it('safra sem Ym ⇒ índice e janelas gravados, predita e Ym nulas', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest({ expectedYield: null }) as never);
+    era5.getDailySeriesForField.mockResolvedValue(SERIES);
+    const r = await msaService.processHarvest(USER, 'h1');
+    expect(r.run.status).toBe('SUCCEEDED');
+    expect(r.run.expectedYield).toBeNull();
+    expect(r.run.predictedYield).toBeNull();
+    expect(r.run.yieldIndex).not.toBeNull();
+    expect(r.run.phasesReached).toBe(4);
+  });
+
+  it('ciclo em curso ⇒ phasesReached < 4 e fator 1 nas janelas não alcançadas', async () => {
+    // Emergência há 40 dias e série completa até hoje − 6: ~35 dias × ~15 °C·dia ⇒ F2/F3, sem F4.
+    const addDays = (iso: string, n: number) => new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
+    const emergence = addDays(TODAY, -40);
+    const recent = SERIES.slice(0, 35).map((d, i) => ({ ...d, date: addDays(emergence, i) }));
+    repo.findHarvestForProcessing.mockResolvedValue(harvest({ emergence }) as never);
+    era5.getDailySeriesForField.mockResolvedValue(recent);
+    const r = await msaService.processHarvest(USER, 'h1');
+    expect(r.run.status).toBe('SUCCEEDED');
+    expect(r.run.phasesReached!).toBeLessThan(4);
+    expect(r.phases!.filter((p) => p.days === 0).length).toBe(4 - r.run.phasesReached!);
+  });
+
+  it('mesmos dados ⇒ resumos, série, índice e predita idênticos (determinístico, sem semente)', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
     era5.getDailySeriesForField.mockResolvedValue(SERIES);
-    await msaService.processHarvest(USER, 'h1', { seed: 7 });
-    await msaService.processHarvest(USER, 'h1', { seed: 7 });
+    const r1 = await msaService.processHarvest(USER, 'h1');
+    const r2 = await msaService.processHarvest(USER, 'h1');
     const [, d1, s1] = repo.createSucceededRun.mock.calls[0]!;
     const [, d2, s2] = repo.createSucceededRun.mock.calls[1]!;
     expect(s1).toEqual(s2);
     expect(d1).toEqual(d2);
-  });
-
-  it('sem semente informada, gera uma em [0, 2^31) e a grava', async () => {
-    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
-    era5.getDailySeriesForField.mockResolvedValue(SERIES);
-    const r = await msaService.processHarvest(USER, 'h1');
-    expect(Number.isInteger(r.run.seed)).toBe(true);
-    expect(r.run.seed!).toBeGreaterThanOrEqual(0);
-    expect(r.run.seed!).toBeLessThan(2 ** 31);
+    expect(r1.run.yieldIndex).toBe(r2.run.yieldIndex);
+    expect(r1.run.predictedYield).toBe(r2.run.predictedYield);
   });
 
   it('erro na gravação ⇒ run FAILED com a mensagem e 500', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
     era5.getDailySeriesForField.mockResolvedValue(SERIES);
     repo.createSucceededRun.mockRejectedValueOnce(new Error('disco cheio'));
-    await expect(msaService.processHarvest(USER, 'h1', { seed: 1 })).rejects.toMatchObject({ status: 500, code: 'MSA_PROCESSING_FAILED' });
-    expect(repo.createRun).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED', error: 'Error: disco cheio', seed: 1 }));
+    await expect(msaService.processHarvest(USER, 'h1')).rejects.toMatchObject({ status: 500, code: 'MSA_PROCESSING_FAILED' });
+    expect(repo.createRun).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED', error: 'Error: disco cheio' }));
   });
 });
 
-describe('msaService.decisionScenarios / recordDecision', () => {
+describe('yieldFields', () => {
+  const cycle = { yieldIndex: 0.736, phasesReached: 4, factors: [1, 0.92, 0.8, 1] as [number, number, number, number] };
+
+  it('com Ym: predita = Ym × índice', () => {
+    expect(yieldFields(cycle, 65)).toEqual({ expectedYield: 65, yieldIndex: 0.736, phasesReached: 4, predictedYield: 65 * 0.736 });
+  });
+
+  it('sem Ym: predita nula', () => {
+    expect(yieldFields(cycle, null)).toEqual({ expectedYield: null, yieldIndex: 0.736, phasesReached: 4, predictedYield: null });
+  });
+});
+
+describe('cultivarChangedSinceRun', () => {
+  const snapshot = snapshotCultivar(SOJA as never);
+
+  it('mesmos valores ⇒ false; nome/id diferentes não contam', () => {
+    expect(cultivarChangedSinceRun(snapshot, SOJA)).toBe(false);
+    expect(cultivarChangedSinceRun(snapshot, { ...SOJA, name: 'Outro nome', id: 'c2' })).toBe(false);
+  });
+
+  it('parâmetro alterado depois da run ⇒ true', () => {
+    expect(cultivarChangedSinceRun(snapshot, { ...SOJA, kcMid: 1.1 })).toBe(true);
+  });
+
+  it('chave nova (ex.: tUpper) entra na comparação pela união das chaves, sem lista fixa', () => {
+    const withUpper = { ...snapshot, tUpper: 35 };
+    expect(cultivarChangedSinceRun(withUpper, { ...SOJA, tUpper: 35 })).toBe(false);
+    expect(cultivarChangedSinceRun(withUpper, { ...SOJA, tUpper: 38 })).toBe(true);
+    expect(cultivarChangedSinceRun(withUpper, SOJA)).toBe(true); // só o snapshot tem o parâmetro
+  });
+
+  it('parâmetro presente só na cultivar atual (snapshot anterior a tUpper) ⇒ true', () => {
+    expect(cultivarChangedSinceRun(snapshot, { ...SOJA, tUpper: 30 })).toBe(true);
+    expect(cultivarChangedSinceRun(snapshot, { ...SOJA, tUpper: null })).toBe(false); // ausente = null dos dois lados
+  });
+
+  it('snapshot inválido ⇒ false', () => {
+    expect(cultivarChangedSinceRun(null, SOJA)).toBe(false);
+  });
+});
+
+describe('msaService.getLatest', () => {
   const run = {
-    id: 'run-ok', status: 'SUCCEEDED', cultivarSnapshot: snapshotCultivar(SOJA as never),
-    phaseSummaries: [
-      { phase: 'F3', ksMeanP50: 0.72 },
-      { phase: 'F4', ksMeanP50: null },
-    ],
+    id: 'run-ok', status: 'SUCCEEDED', cultivarSnapshot: snapshotCultivar(SOJA as never), qmCalibrationId: null,
+    expectedYield: 65, yieldIndex: 0.9, predictedYield: 58.5, phasesReached: 4,
+    startedAt: new Date(), finishedAt: new Date(), dateFrom: new Date('2025-11-01T00:00:00Z'), dateTo: new Date('2026-03-30T00:00:00Z'),
+    phaseSummaries: [{ phase: 'F1', days: 10, ksMean: 1, etcAdjAccum: 1, precipAccum: 1, yieldReductionPct: 0 }],
   };
-  const daily = Array.from({ length: 10 }, (_, i) => ({
-    runId: 'run-ok', date: new Date(Date.UTC(2026, 0, 10 + i)), phase: 'F4', gda: 15, gdaAccum: 1000, zr: 0.95, et0: 4, kc: 1, etc: 4,
-    precipitation: 0, dr: 10, ks: 1, etcAdj: 4, taw: 150, raw: 75,
-  }));
+  const daily = [{ runId: 'run-ok', date: new Date(Date.UTC(2026, 2, 30)), phase: 'COMPLETED', gda: 15, gdaAccum: 1200, zr: 0.95, et0: 4, kc: 0.5, etc: 2, precipitation: 0, dr: 10, ks: 1, etcAdj: 2, taw: 150, raw: 75 }];
 
   beforeEach(() => {
-    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
     repo.latestSucceededRun.mockResolvedValue(run as never);
     repo.dailyResults.mockResolvedValue(daily as never);
   });
 
-  it('gera os cenários sobre a última run sem persistir', async () => {
-    const r = await msaService.decisionScenarios(USER, 'h1', { phase: 'F3', doseBase: 100, efficiencyBase: 0.6 });
-    expect(r.runId).toBe('run-ok');
-    expect(r.scenarios.a.doseAdjusted).toBeCloseTo(72, 10);
-    expect(r.scenarios.b?.nextPhase).toBe('F4');
-    expect(repo.createDecision).not.toHaveBeenCalled();
+  it('cultivar inalterada ⇒ cultivarChangedSinceRun false', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
+    const r = await msaService.getLatest(USER, 'h1');
+    expect(r.cultivarChangedSinceRun).toBe(false);
+    expect(r.run.predictedYield).toBe(58.5);
+    expect(r.currentPhase).toBe('COMPLETED');
   });
 
-  it('janela não alcançada ⇒ 422 PHASE_NOT_REACHED', async () => {
-    await expect(msaService.decisionScenarios(USER, 'h1', { phase: 'F4', doseBase: 100, efficiencyBase: 0.6 })).rejects.toMatchObject({ code: 'PHASE_NOT_REACHED' });
+  it('cultivar alterada depois da run ⇒ true', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest({ cultivar: { ...SOJA, kcMid: 1.1 } }) as never);
+    const r = await msaService.getLatest(USER, 'h1');
+    expect(r.cultivarChangedSinceRun).toBe(true);
   });
 
   it('sem run ⇒ 404 NO_MSA_RESULT', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
     repo.latestSucceededRun.mockResolvedValue(null);
     await expect(msaService.getLatest(USER, 'h1')).rejects.toMatchObject({ status: 404, code: 'NO_MSA_RESULT' });
   });
+});
 
-  it('registra o payload do cenário escolhido e rejeita B indisponível', async () => {
-    repo.createDecision.mockImplementation(async (d) => d as never);
-    const d = await msaService.recordDecision(USER, 'h1', { phase: 'F3', scenario: 'A', doseBase: 100, efficiencyBase: 0.6, justification: 'ok' });
-    expect(d).toMatchObject({ scenario: 'A', runId: 'run-ok', decidedById: 'u1' });
-    expect((d.scenarioPayload as { doseAdjusted: number }).doseAdjusted).toBeCloseTo(72, 10);
-
-    repo.dailyResults.mockResolvedValue(daily.slice(0, 1) as never); // F4 com 1 dia ⇒ b nulo
-    await expect(msaService.recordDecision(USER, 'h1', { phase: 'F3', scenario: 'B', doseBase: 100, efficiencyBase: 0.6, justification: 'x' })).rejects.toMatchObject({ code: 'SCENARIO_UNAVAILABLE' });
+describe('processQuerySchema', () => {
+  it('rejeita seed apontando o campo', async () => {
+    const { processQuerySchema } = await import('./dtos/msa.dto');
+    const result = processQuerySchema.safeParse({ seed: '42' });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(Object.keys(result.error.flatten().fieldErrors)).toEqual(['seed']);
+    expect(processQuerySchema.parse({ sync: 'true' }).sync).toBe(true);
   });
 });

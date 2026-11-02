@@ -1,6 +1,6 @@
 import type { Phase, PhaseView, YieldPhase } from '@/lib/api/types';
 import { PHASE_LABELS, YIELD_PHASES } from '@/lib/api/types';
-import { formatMm, formatNumber, formatPct, formatPercentiles, severity, SEVERITY_LABELS, type Severity } from '@/lib/msa/msa';
+import { formatMm, formatNumber, formatPct, severity, SEVERITY_LABELS, type Severity } from '@/lib/msa/msa';
 
 const TONE: Record<Severity, string> = {
   ok: 'border-brand-300 bg-brand-50',
@@ -42,15 +42,10 @@ export function PhaseCards({ phases, currentPhase }: { phases: ReadonlyArray<Pha
                     <dt className="text-xs text-slate-600">Ks médio</dt>
                     <dd className="text-2xl font-semibold">{formatNumber(p.ksMean)}</dd>
                   </div>
-                  <div>
-                    <dt className="text-xs text-slate-600">Percentis do Ks (Monte Carlo)</dt>
-                    <dd className="text-xs">{formatPercentiles(p.percentiles.ksMean)}</dd>
-                  </div>
                   <div className="flex items-baseline justify-between">
                     <dt className="text-xs text-slate-600">Redução potencial de produtividade</dt>
                     <dd className="font-medium">{formatPct(p.yieldReductionPct)}</dd>
                   </div>
-                  {p.percentiles.yieldReductionPct && <dd className="-mt-1 text-xs text-slate-600">{formatPercentiles(p.percentiles.yieldReductionPct, 1)}</dd>}
                   <div className="flex items-baseline justify-between">
                     <dt className="text-xs text-slate-600">ETc ajustada acumulada</dt>
                     <dd>{formatMm(p.etcAdjAccum)}</dd>
@@ -60,10 +55,8 @@ export function PhaseCards({ phases, currentPhase }: { phases: ReadonlyArray<Pha
                     <dd>{formatMm(p.precipAccum)}</dd>
                   </div>
                   <div className="flex items-baseline justify-between text-xs text-slate-600">
-                    <dt>Dias · iterações válidas</dt>
-                    <dd>
-                      {p.days} · {p.validIterations}
-                    </dd>
+                    <dt>Dias na janela</dt>
+                    <dd>{p.days}</dd>
                   </div>
                 </dl>
               ) : (

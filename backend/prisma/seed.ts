@@ -1,8 +1,8 @@
 // Seed executado por `pnpm prisma db seed` (e após `migrate reset`):
-//  1. cultivares de referência do sistema (sempre);
+//  1. cultivar de referência do sistema (soja; sempre);
 //  2. administrador inicial a partir de ADMIN_EMAIL e ADMIN_PASSWORD (se definidas).
 import bcrypt from 'bcrypt';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { env } from '../src/config/env';
 import { passwordSchema } from '../src/modules/auth/dtos/password.schema';
 import { cultivarParamsSchema } from '../src/modules/cultivars/dtos/cultivar-params.schema';
@@ -22,16 +22,17 @@ async function seedCultivars(): Promise<void> {
     }
 
     // Idempotente por name + crop entre as de referência (createdById nulo
-    // torna a unicidade do banco inoperante para elas).
+    // torna a unicidade do banco inoperante para elas). referenceSnapshot fica
+    // nulo: a referência é a própria origem.
     const existing = await prisma.cultivar.findFirst({ where: { name, crop, isDefault: true } });
     if (existing) {
       await prisma.cultivar.update({
         where: { id: existing.id },
-        data: { cycleDescription, ...parsed.data },
+        data: { cycleDescription, ...parsed.data, referenceSnapshot: Prisma.DbNull },
       });
     } else {
       await prisma.cultivar.create({
-        data: { name, crop, cycleDescription, ...parsed.data, isDefault: true, createdById: null },
+        data: { name, crop, cycleDescription, ...parsed.data, isDefault: true, createdById: null, referenceSnapshot: Prisma.DbNull },
       });
     }
     console.log(`[seed] Cultivar de referência ${existing ? 'atualizada' : 'criada'}: ${name}`);
