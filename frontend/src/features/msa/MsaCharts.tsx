@@ -48,6 +48,7 @@ export function MsaCharts({ days, banner }: { days: ReadonlyArray<DailyRow>; ban
   const data = useMemo(() => days.map((d) => ({ ...d })), [days]);
   const areas = usePhaseAreas(days);
   const interval = Math.max(0, Math.floor(days.length / 12) - 1);
+  const halfInterval = Math.max(0, Math.floor(days.length / 6) - 1); // gráficos de meia largura: metade dos rótulos
 
   return (
     <div className="space-y-4" data-testid="msa-charts">
@@ -89,7 +90,7 @@ export function MsaCharts({ days, banner }: { days: ReadonlyArray<DailyRow>; ban
             <ResponsiveContainer>
               <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="date" tickFormatter={tick} interval={interval} fontSize={11} />
+                <XAxis dataKey="date" tickFormatter={tick} interval={halfInterval} fontSize={11} />
                 <YAxis fontSize={11} width={36} />
                 <Tooltip content={<DayTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -105,9 +106,9 @@ export function MsaCharts({ days, banner }: { days: ReadonlyArray<DailyRow>; ban
           <h3 className="mb-2 text-sm font-semibold text-slate-800">Coeficiente de estresse (Ks)</h3>
           <div className="h-64">
             <ResponsiveContainer>
-              <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+              <LineChart data={data} margin={{ top: 8, right: 34, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="date" tickFormatter={tick} interval={interval} fontSize={11} />
+                <XAxis dataKey="date" tickFormatter={tick} interval={halfInterval} fontSize={11} />
                 <YAxis domain={[0, 1]} fontSize={11} width={36} />
                 <Tooltip content={<DayTooltip />} />
                 <ReferenceLine y={0.85} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: '0,85', position: 'right', fontSize: 10 }} />

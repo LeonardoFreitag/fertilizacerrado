@@ -31,6 +31,8 @@
     "verify-link": "docker compose logs api | grep -oE 'http://[^ ]*(verificar-email|redefinir-senha)[^ ]*' | tail -1",
     "clean": "docker compose down -v",
     "db:backup": "bash backend/scripts/db/backup.sh",
-    "db:restore": "bash backend/scripts/db/restore.sh"
+    "db:restore": "bash backend/scripts/db/restore.sh",
+    "manual:capture": "pnpm --dir frontend manual:capture",
+    "manual:pdf": "pnpm --dir frontend manual:pdf"
   }
 }

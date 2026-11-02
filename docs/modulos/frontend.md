@@ -140,3 +140,20 @@ pnpm e2e                          # Playwright contra http://localhost (stack no
                                   # sem ERA5_E2E_CDS=1 faz `touch` no cache para não ir ao CDS
 pnpm exec playwright install chromium   # primeira vez
 ```
+
+## Manual do usuário (`docs/manual/`)
+
+As imagens do manual são geradas por Playwright, fora da suíte e2e e fora do CI:
+
+```bash
+pnpm manual:capture   # na raiz: captura as telas e confere a consistência do manual
+pnpm manual:pdf       # na raiz: gera docs/manual/manual-completo.pdf
+```
+
+- **`frontend/e2e/manual/capture.spec.ts`** (config própria: `playwright.manual.config.ts`, 1440×900, `deviceScaleFactor` 1,5, `--lang=pt-BR` para os campos de data). O `playwright.config.ts` da suíte ignora `e2e/manual/`.
+- **Dados de demonstração**: três usuários do domínio reservado `@manual.fertilizacerrado.local`, a Fazenda Boa Vista, dois talhões no único trecho de pasto da célula ERA5 em cache (−16,7; −49,3), uma cultivar própria e duas safras. A safra do painel é soja 2025/26 com emergência em 2025-10-01, escolhida por ter estresse real na floração; o motor é determinístico, então os valores (Ym, índice do ciclo, predita) são reproduzíveis sem semente.
+- **Limpeza**: `backend/scripts/manual/cleanup-demo.sql` roda antes e depois, e apaga só o que pertence ao domínio reservado (a API não tem exclusão de safra nem de usuário). `MANUAL_KEEP_DATA=1` mantém os dados para depuração.
+- **Pré-requisitos**: stack no ar com `worker` e `etl`, admin semeado, internet para os tiles do mapa e o cache do ETL com os meses da célula de Goiânia desde 2025-10. A captura falha com mensagem clara se faltar cache ou se os tiles não carregarem. Ela não vai ao CDS: a ingestão disparada pela criação das safras é servida pelo cache.
+- **Publicação atômica**: as imagens são gravadas em `frontend/test-results/manual/img` e só substituem `docs/manual/img` se todos os capítulos passarem. O `img/captura.json` guarda os valores citados no capítulo 6.
+- **Consistência** (`frontend/scripts/manual-check.mjs`, ao fim da captura e antes do PDF): imagem ausente, imagem órfã, link ou âncora quebrados, aviso de responsabilidade técnica e valores marcados no capítulo 6 com `<!-- valor:caminho|casas -->` diferentes do `captura.json`.
+- **PDF** (`frontend/scripts/manual-pdf.mjs`): `marked` + Chromium do Playwright; capa, sumário, um capítulo por seção, figuras numeradas. Imagens acima de 300 KB entram como JPEG só dentro do PDF.

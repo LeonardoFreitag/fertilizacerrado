@@ -153,6 +153,7 @@ FertilizaCerrado/
 | `openspec/changes/*/proposal.md` | Equipe técnica | Decisões de design antes da implementação |
 | `docs/arquitetura.md` | Todos | Visão macro do sistema |
 | `docs/modulos/*.md` | Desenvolvedor / orientador | Endpoints, modelos de dados, regras de negócio |
+| `docs/manual/` | Agrônomo / produtor / administrador / banca | Manual do usuário passo a passo, com as telas, e `manual-completo.pdf` |
 | `docs/msa/algoritmos.md` | Heb / banca | Fórmulas matemáticas com referência ao código |
 | `docs/msa/era5-etl.md` | Heb / desenvolvedor | Pipeline de ingestão e correção dos dados |
 | `docs/msa/validacao.md` | Heb / banca | Protocolo e métricas de validação científica |

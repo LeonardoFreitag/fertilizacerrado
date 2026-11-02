@@ -6,6 +6,7 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: ['**/manual/**'], // captura do manual: playwright.manual.config.ts
   timeout: 90_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,

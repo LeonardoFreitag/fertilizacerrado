@@ -18,7 +18,11 @@ pnpm seed                       # usuário ADMIN e cultivares de referência
 
 Interface em <http://localhost> (login com `ADMIN_EMAIL`/`ADMIN_PASSWORD`), API em `http://localhost/api/v1`, Adminer em <http://localhost:8080>. Sem `SMTP_HOST`, os links de verificação de e-mail saem no log da API (`pnpm verify-link`).
 
-Atalhos do `package.json` da raiz: `pnpm stop`, `pnpm logs:api`, `pnpm migrate`, `pnpm test`, `pnpm test:e2e`, `pnpm etl:status`, `pnpm db:backup`, `pnpm db:restore -- backups/<arquivo>.dump`, `pnpm clean` (remove **todos** os volumes, inclusive o cache ERA5).
+Atalhos do `package.json` da raiz: `pnpm stop`, `pnpm logs:api`, `pnpm migrate`, `pnpm test`, `pnpm test:e2e`, `pnpm etl:status`, `pnpm db:backup`, `pnpm db:restore -- backups/<arquivo>.dump`, `pnpm manual:capture` e `pnpm manual:pdf` (imagens e PDF do manual do usuário), `pnpm clean` (remove **todos** os volumes, inclusive o cache ERA5).
+
+### Após atualizar para o motor 2.0.0 (predição de produtividade)
+
+A migration `refocus_yield_prediction` é destrutiva: descarta as runs do MSA anteriores (motor 1.x, não reproduzíveis), a tabela de decisões e a cultura milho (falha se houver cultivar de milho em uso). Faça backup antes (`pnpm db:backup`) e, depois do deploy, acione **Processar todas as safras ativas** em `/admin` para recalcular as safras com índice do ciclo e produtividade predita.
 
 ## Estrutura
 
@@ -33,6 +37,7 @@ Atalhos do `package.json` da raiz: `pnpm stop`, `pnpm logs:api`, `pnpm migrate`,
 
 ## Documentação
 
+- **[Manual do usuário](docs/manual/README.md)** — passo a passo para agrônomos, produtores e administradores, com as telas ([PDF](docs/manual/manual-completo.pdf))
 - [Arquitetura](docs/arquitetura.md) — visão geral, fases, stack, fluxo de dados
 - Módulos: [auth](docs/modulos/auth.md), [propriedades e talhões](docs/modulos/propriedades.md), [MSA](docs/modulos/msa.md), [frontend](docs/modulos/frontend.md)
 - MSA: [algoritmos](docs/msa/algoritmos.md), [pipeline ERA5-Land e correção de viés](docs/msa/era5-etl.md), [validação](docs/msa/validacao.md), [questões abertas para a pesquisadora](docs/msa/questoes-abertas.md)
