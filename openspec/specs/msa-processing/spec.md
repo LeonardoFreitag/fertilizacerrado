@@ -2,12 +2,12 @@
 
 ## Purpose
 
-Processamento determinístico do MSA por safra com persistência reproduzível (snapshots da cultivar e do solo, versão do motor), gravando por run os resumos por janela, o índice de produtividade do ciclo, a produtividade potencial da safra no momento e a produtividade predita; consulta de resultados (com indicação de cultivar alterada desde a run) e histórico de runs. Não há cenários de decisão nem registro de decisão do técnico.
+Processamento determinístico do MSA por safra (motor 2.1.0; graus-dia pelo método de Ometto (1981) com `tBase` e `tUpper` opcional da cultivar) com persistência reproduzível (snapshots da cultivar e do solo, versão do motor), gravando por run os resumos por janela, o índice de produtividade do ciclo, a produtividade potencial da safra no momento e a produtividade predita; consulta de resultados (com indicação de cultivar alterada desde a run) e histórico de runs. Não há cenários de decisão nem registro de decisão do técnico.
 
 ## Requirements
 
 ### Requirement: Processamento de uma safra
-`POST /api/v1/harvests/:id/msa/process` (roles `AGRONOMO` e `ADMIN`, safra no escopo do usuário) SHALL por padrão enfileirar um job `msa-process {harvestId, reason: "MANUAL"}` e responder 202 com `jobId` e `queue`. Com `?sync=true`, restrito a `ADMIN` (403 `SYNC_ADMIN_ONLY` para os demais), SHALL executar inline: carregar safra, talhão e cultivar; exigir `altitudeM` do talhão (422 `MISSING_FIELD_ALTITUDE`, sem criar run); usar `thetaFC`/`thetaWP` do talhão ou os defaults 0,28/0,12; definir o intervalo da emergência até o menor entre `hoje − 6` (UTC) e o dia em que o GDA acumulado atinge `gdaTotal`; verificar a cobertura da série e, havendo lacuna, gravar uma run `NEEDS_DATA` com `missingDates` sem calcular; caso contrário executar uma única vez `runDailyBalance`, `summarizeByPhase` e `cycleYieldIndex`, e gravar run `SUCCEEDED` com a série diária, os quatro resumos por janela, `expectedYield` (valor da safra no momento, ou nulo), `yieldIndex`, `phasesReached` e `predictedYield = expectedYield × yieldIndex` (nulo sem `expectedYield`) em uma transação, atualizando `latestRunId` da safra. O worker executa a mesma lógica para jobs da fila, com `triggeredById` nulo. Toda run MUST registrar `reason` (`WEEKLY`, `BACKFILL` ou `MANUAL`) e, quando vinda da fila, `jobId`. Erro no cálculo MUST gravar run `FAILED` com a mensagem e, no modo inline, responder 500 `MSA_PROCESSING_FAILED`. O sistema MUST NOT interpolar dias faltantes. A rota MUST NOT aceitar `seed` e a run MUST NOT ter `seed`, `iterations`, `sigmaPrecip` ou `sigmaTemp`.
+`POST /api/v1/harvests/:id/msa/process` (roles `AGRONOMO` e `ADMIN`, safra no escopo do usuário) SHALL por padrão enfileirar um job `msa-process {harvestId, reason: "MANUAL"}` e responder 202 com `jobId` e `queue`. Com `?sync=true`, restrito a `ADMIN` (403 `SYNC_ADMIN_ONLY` para os demais), SHALL executar inline: carregar safra, talhão e cultivar; exigir `altitudeM` do talhão (422 `MISSING_FIELD_ALTITUDE`, sem criar run); usar `thetaFC`/`thetaWP` do talhão ou os defaults 0,28/0,12; definir o intervalo da emergência até o menor entre `hoje − 6` (UTC) e o dia em que o GDA acumulado — calculado pelo método de Ometto com `tBase` e `tUpper` da cultivar — atinge `gdaTotal`; verificar a cobertura da série e, havendo lacuna, gravar uma run `NEEDS_DATA` com `missingDates` sem calcular; caso contrário executar uma única vez `runDailyBalance` (mesmo método de graus-dia), `summarizeByPhase` e `cycleYieldIndex`, e gravar run `SUCCEEDED` com a série diária, os quatro resumos por janela, `expectedYield` (valor da safra no momento, ou nulo), `yieldIndex`, `phasesReached` e `predictedYield = expectedYield × yieldIndex` (nulo sem `expectedYield`) em uma transação, atualizando `latestRunId` da safra. O worker executa a mesma lógica para jobs da fila, com `triggeredById` nulo. Toda run MUST registrar `reason` (`WEEKLY`, `BACKFILL` ou `MANUAL`) e, quando vinda da fila, `jobId`. Erro no cálculo MUST gravar run `FAILED` com a mensagem e, no modo inline, responder 500 `MSA_PROCESSING_FAILED`. O sistema MUST NOT interpolar dias faltantes. A rota MUST NOT aceitar `seed` e a run MUST NOT ter `seed`, `iterations`, `sigmaPrecip` ou `sigmaTemp`.
 
 #### Scenario: Enfileiramento padrão
 - **WHEN** um `AGRONOMO` chama `POST .../msa/process`
@@ -19,7 +19,11 @@ Processamento determinístico do MSA por safra com persistência reproduzível (
 
 #### Scenario: Processamento síncrono bem-sucedido
 - **WHEN** um `ADMIN` chama `POST .../msa/process?sync=true` para safra com `expectedYield 65`, talhão com altitude e série completa da emergência a hoje − 6
-- **THEN** a resposta é 201 com a run `SUCCEEDED`, `reason MANUAL`, quatro resumos de janela, `expectedYield 65`, `yieldIndex` em [0, 1], `predictedYield = 65 × yieldIndex`, `phasesReached` em 1–4, `engineVersion "2.0.0"`, snapshots, e `latestRunId` da safra passa a ser a run
+- **THEN** a resposta é 201 com a run `SUCCEEDED`, `reason MANUAL`, quatro resumos de janela, `expectedYield 65`, `yieldIndex` em [0, 1], `predictedYield = 65 × yieldIndex`, `phasesReached` em 1–4, `engineVersion "2.1.0"`, snapshots, e `latestRunId` da safra passa a ser a run
+
+#### Scenario: Limite superior reduz o acúmulo
+- **WHEN** a mesma safra é processada com a cultivar em `tUpper 30` e, depois, com `tUpper null`, numa série com dias de Tmax > 30 °C
+- **THEN** a run com `tUpper 30` atinge `gdaTotal` em data igual ou posterior à da run sem limite (`dateTo` maior ou igual), e o `gdaAccum` diário nunca a excede
 
 #### Scenario: Safra sem produtividade potencial
 - **WHEN** a safra não tem `expectedYield` e o processamento conclui
@@ -55,7 +59,7 @@ Processamento determinístico do MSA por safra com persistência reproduzível (
 
 #### Scenario: Snapshot fiel
 - **WHEN** a run é criada
-- **THEN** `cultivarSnapshot` contém os 15 parâmetros científicos, `id`, `name` e `crop` da cultivar como estavam no momento, e o cálculo usou exatamente esses valores
+- **THEN** `cultivarSnapshot` contém os 16 parâmetros científicos (inclusive `tUpper`, número ou `null`), `id`, `name` e `crop` da cultivar como estavam no momento, e o cálculo usou exatamente esses valores
 
 #### Scenario: Reprodutibilidade
 - **WHEN** a safra é processada duas vezes com os mesmos dados
@@ -93,7 +97,7 @@ O talhão SHALL aceitar `altitudeM` (metros, em [−100, 5000]), `thetaFC` e `th
 - **THEN** a resposta é 200 com `altitudeM` nulo
 
 ### Requirement: Consulta de resultados
-`GET /api/v1/harvests/:id/msa` SHALL devolver a última run `SUCCEEDED` com seus metadados (incluindo `expectedYield`, `yieldIndex`, `predictedYield`, `phasesReached`), os quatro resumos de janela (`phase, days, ksMean, etcAdjAccum, precipAccum, yieldReductionPct`, sem percentis nem `validIterations`), `currentPhase` e `cultivarChangedSinceRun` (verdadeiro quando, iterando sobre todas as chaves de `CultivarParams` presentes no `cultivarSnapshot` da run, algum valor difere da cultivar atual da safra; a comparação MUST NOT depender de uma lista fixa de nomes, de modo que um parâmetro novo em `CultivarParams` entre nela sem alteração); 404 `NO_MSA_RESULT` se a safra não tem run `SUCCEEDED`. `GET .../msa/daily?runId=` SHALL devolver a série diária da run (padrão: a última), 404 se a run não pertence à safra. `GET .../msa/runs` SHALL listar todas as runs da safra, mais recente primeiro, sem séries. As rotas `GET .../msa/decision`, `POST .../msa/decisions` e `GET .../msa/decisions` MUST NOT existir (404).
+`GET /api/v1/harvests/:id/msa` SHALL devolver a última run `SUCCEEDED` com seus metadados (incluindo `expectedYield`, `yieldIndex`, `predictedYield`, `phasesReached`), os quatro resumos de janela (`phase, days, ksMean, etcAdjAccum, precipAccum, yieldReductionPct`, sem percentis nem `validIterations`), `currentPhase` e `cultivarChangedSinceRun` (verdadeiro quando, iterando sobre a união das chaves numéricas do `cultivarSnapshot` da run e da cultivar atual da safra — chave ausente de um lado vale `null` —, algum valor difere; a comparação MUST NOT depender de uma lista fixa de nomes); 404 `NO_MSA_RESULT` se a safra não tem run `SUCCEEDED`. `GET .../msa/daily?runId=` SHALL devolver a série diária da run (padrão: a última), 404 se a run não pertence à safra. `GET .../msa/runs` SHALL listar todas as runs da safra, mais recente primeiro, sem séries. As rotas `GET .../msa/decision`, `POST .../msa/decisions` e `GET .../msa/decisions` MUST NOT existir (404).
 
 #### Scenario: Último resultado
 - **WHEN** a safra tem runs `SUCCEEDED` e, depois, uma `NEEDS_DATA`
@@ -111,8 +115,12 @@ O talhão SHALL aceitar `altitudeM` (metros, em [−100, 5000]), `thetaFC` e `th
 - **WHEN** o técnico altera `kcMid` da cultivar depois da run
 - **THEN** `GET .../msa` devolve `cultivarChangedSinceRun: true` e a run mantém o snapshot original
 
+#### Scenario: Run do motor 2.0.0 sem tUpper
+- **WHEN** a última run tem `cultivarSnapshot` sem a chave `tUpper` (motor 2.0.0) e a cultivar atual tem `tUpper 30`
+- **THEN** `GET .../msa` devolve `cultivarChangedSinceRun: true` (o painel sugere reprocessar) e a run mantém `engineVersion "2.0.0"`
+
 #### Scenario: Parâmetro novo entra na comparação
-- **WHEN** `CultivarParams` ganha uma chave nova (ex.: `tUpper`) gravada no snapshot e só ela difere da cultivar atual
+- **WHEN** `CultivarParams` ganha uma chave nova gravada no snapshot e só ela difere da cultivar atual
 - **THEN** `cultivarChangedSinceRun` é `true` sem alteração na função de comparação
 
 #### Scenario: Nunca processada
