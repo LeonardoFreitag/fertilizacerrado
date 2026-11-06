@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Ferramentas do protocolo de validação científica do MSA: script de validação de ET₀ contra referência externa (CROPWAT) com RMSE, R², NSE e PBIAS.
+Ferramentas do protocolo de validação científica do MSA: script de validação de ET₀ contra referência externa (CROPWAT) com RMSE, R², NSE e PBIAS, e erro relativo da produtividade predita frente à produtividade observada de safras históricas (Caso 2). Não há script de convergência de Monte Carlo.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ Ferramentas do protocolo de validação científica do MSA: script de validaçã
 - **THEN** o CSV de comparação é gravado ao lado da entrada com o sufixo `.comparison.csv`
 
 ### Requirement: Métricas do protocolo de validação
-O script SHALL calcular RMSE `= sqrt(mean((S − O)²))`, R² como o quadrado do coeficiente de correlação de Pearson entre S e O, NSE `= 1 − Σ(O − S)² / Σ(O − Ō)²` e PBIAS `= Σ(O − S) / Σ O × 100`, e comparar com os critérios RMSE ≤ 0,5, R² ≥ 0,95, NSE ≥ 0,80 e |PBIAS| ≤ 10 %.
+O script SHALL calcular RMSE `= sqrt(mean((S − O)²))`, R² como o quadrado do coeficiente de correlação de Pearson entre S e O, NSE `= 1 − Σ(O − S)² / Σ(O − Ō)²` e PBIAS `= Σ(O − S) / Σ O × 100`, e comparar com os critérios RMSE ≤ 0,5, R² ≥ 0,95, NSE ≥ 0,80 e |PBIAS| ≤ 10 %. `metrics.ts` SHALL exportar também `relativeError(predicted, observed) = (predicted − observed) / observed` (erro relativo da produtividade predita do Caso 2, em fração; `RangeError` para `observed ≤ 0`), e `docs/msa/validacao.md` SHALL descrever no Caso 2 a comparação da produtividade predita pela run com a produtividade observada da safra histórica, quando disponível, registrando o erro relativo no relatório.
 
 #### Scenario: Séries idênticas
 - **WHEN** S = O em todas as linhas
@@ -48,29 +48,10 @@ O script SHALL calcular RMSE `= sqrt(mean((S − O)²))`, R² como o quadrado do
 - **WHEN** S = O + 0,5 em todas as linhas
 - **THEN** RMSE 0,5, R² 1, PBIAS negativo e NSE menor que 1
 
-### Requirement: Script de convergência do Monte Carlo
-`backend/scripts/validation/mc-validate.ts`, executado por `pnpm msa:validate-mc -- <clima.csv> --cultivar soja|milho [--altitude m] [--soil fc,wp] [--seed n] [--out saida.csv]` ou com `--synthetic [dias]` no lugar do CSV, SHALL executar `runMonteCarlo` com 100, 500 e 1.000 iterações e a mesma semente, e imprimir por janela F1–F4 o P50 de `ksMean` nas três contagens, a variação relativa |P50₅₀₀ − P50₁₀₀₀| / P50₁₀₀₀, o critério de aceitação (< 0,5 %), P10/P90 a 1.000 iterações, o baseline e `validIterations`. O CSV de clima MUST ter `date, tmax, tmin, tdew, u2, rn, precipitation` e opcionalmente `tmean`. Com `--out`, SHALL gravar os números em CSV.
+#### Scenario: Erro relativo da produtividade
+- **WHEN** `relativeError(47,84, 52)` é avaliado
+- **THEN** o resultado é −0,08 (tolerância 1e-9)
 
-#### Scenario: Série sintética
-- **WHEN** o script roda com `--synthetic 150 --cultivar soja --seed 2026`
-- **THEN** imprime as quatro janelas com os P50 das três contagens e a variação relativa de cada uma fica abaixo de 0,5 %
-
-#### Scenario: CSV de exemplo
-- **WHEN** o script roda com `backend/scripts/validation/examples/synthetic-cerrado-season.csv --cultivar soja`
-- **THEN** produz a mesma saída que `--synthetic 150 --seed 2026`
-
-#### Scenario: Cultivar de referência
-- **WHEN** `--cultivar milho` é informado
-- **THEN** os parâmetros usados são os da cultivar de referência de milho de `reference-cultivars.ts`
-
-#### Scenario: Cultivar desconhecida
-- **WHEN** `--cultivar trigo` é informado
-- **THEN** o script encerra com código 1 indicando as opções válidas
-
-#### Scenario: Coluna ausente
-- **WHEN** o CSV não tem `precipitation`
-- **THEN** o script encerra com código 1 indicando a coluna
-
-#### Scenario: Saída em CSV
-- **WHEN** `--out` é informado
-- **THEN** o arquivo contém uma linha por janela com P50 a 100/500/1000, variação relativa, P10/P90 e baseline
+#### Scenario: Observado inválido
+- **WHEN** `relativeError(47,84, 0)` é avaliado
+- **THEN** a função lança `RangeError`
