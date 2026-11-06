@@ -135,13 +135,16 @@ export const CROP_LABELS: Record<Crop, string> = { SOJA: 'Soja' };
 export const EXPECTED_YIELD_MAX_SC_HA = 250;
 
 export const CULTIVAR_PARAM_KEYS = [
-  'tBase', 'gdaTotal', 'gdaF1End', 'gdaF2End', 'gdaF3End',
+  'tBase', 'tUpper', 'gdaTotal', 'gdaF1End', 'gdaF2End', 'gdaF3End',
   'kcIni', 'kcMid', 'kcEnd',
   'depletionFraction', 'zrIni', 'zrMax',
   'kyF1', 'kyF2', 'kyF3', 'kyF4',
 ] as const;
 export type CultivarParamKey = (typeof CULTIVAR_PARAM_KEYS)[number];
-export type CultivarParams = Record<CultivarParamKey, number>;
+/** Parâmetros que aceitam null (tUpper nulo = sem limite superior de temperatura). */
+export const NULLABLE_PARAM_KEYS = ['tUpper'] as const satisfies readonly CultivarParamKey[];
+export type NullableParamKey = (typeof NULLABLE_PARAM_KEYS)[number];
+export type CultivarParams = Record<Exclude<CultivarParamKey, NullableParamKey>, number> & Record<NullableParamKey, number | null>;
 
 export interface CultivarResponse extends CultivarParams {
   id: string;

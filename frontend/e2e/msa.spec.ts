@@ -179,8 +179,14 @@ test('nova cultivar nasce da referência e marca divergências', async ({ page }
   // pré-preenchida com a referência de soja, sem campo de cultura
   await expect(page.locator('#gdaTotal')).toHaveValue('1200');
   await expect(page.locator('#kcMid')).toHaveValue('1.15');
+  await expect(page.locator('#tUpper')).toHaveValue('30'); // temperatura-base superior (Ometto) da referência
   await expect(page.locator('#crop')).toHaveCount(0);
   await expect(page.getByTestId('divergence-summary')).toContainText('igual à referência');
+  await page.locator('#tUpper').fill('');
+  await expect(page.getByTestId('param-tUpper')).toHaveAttribute('data-divergent', 'true');
+  await expect(page.getByTestId('param-tUpper')).toContainText('ref. 30,0');
+  await page.locator('#tUpper').fill('30');
+  await expect(page.getByTestId('param-tUpper')).not.toHaveAttribute('data-divergent', 'true');
   await page.locator('#kcMid').fill('1.10');
   await expect(page.getByTestId('param-kcMid')).toHaveAttribute('data-divergent', 'true');
   await expect(page.getByTestId('param-kcMid')).toContainText('ref. 1,15');

@@ -75,7 +75,7 @@ check "reason MANUAL, sem jobId" "MANUAL|null" "$(echo "$BODY" | j run.reason)|$
 RUN1=$(echo "$BODY" | j run.id)
 check "status SUCCEEDED" SUCCEEDED "$(echo "$BODY" | j run.status)"
 lacks "run sem seed/iterações/sigmas" "$BODY" '"seed"'
-check "engineVersion" 2.0.0 "$(echo "$BODY" | j run.engineVersion)"
+check "engineVersion" 2.1.0 "$(echo "$BODY" | j run.engineVersion)"
 YI=$(echo "$BODY" | j run.yieldIndex); PY=$(echo "$BODY" | j run.predictedYield); echo "      yieldIndex = $YI · predictedYield = $PY sc/ha"
 check "expectedYield da run = Ym da safra" 65 "$(echo "$BODY" | j run.expectedYield)"
 check "phasesReached 4" 4 "$(echo "$BODY" | j run.phasesReached)"
@@ -84,7 +84,7 @@ check "predita = Ym × índice" "$(node -e "console.log(65*$YI)")" "$PY"
 check "dateFrom = emergência" "$EMERGENCE" "$(echo "$BODY" | j run.dateFrom)"
 TO1=$(echo "$BODY" | j run.dateTo); echo "      dateTo (GDA atinge gdaTotal): $TO1 (série vai até $LAST_SYN)"
 check "ciclo encerra antes do fim da série" 1 "$( [ "$TO1" \< "$LAST_SYN" ] && echo 1 || echo 0 )"
-check "snapshot da cultivar com 15 parâmetros + id" "1200|1.15|$SOJA" "$(echo "$BODY" | j run.cultivarSnapshot.gdaTotal)|$(echo "$BODY" | j run.cultivarSnapshot.kcMid)|$(echo "$BODY" | j run.cultivarSnapshot.id)"
+check "snapshot da cultivar com 16 parâmetros (tUpper) + id" "1200|1.15|30|$SOJA" "$(echo "$BODY" | j run.cultivarSnapshot.gdaTotal)|$(echo "$BODY" | j run.cultivarSnapshot.kcMid)|$(echo "$BODY" | j run.cultivarSnapshot.tUpper)|$(echo "$BODY" | j run.cultivarSnapshot.id)"
 check "snapshot do solo (sem defaults)" "0.28|0.12|741|false" "$(echo "$BODY" | j run.soilSnapshot.thetaFC)|$(echo "$BODY" | j run.soilSnapshot.thetaWP)|$(echo "$BODY" | j run.soilSnapshot.altitudeM)|$(echo "$BODY" | j run.soilSnapshot.soilDefaults)"
 check "4 janelas" 4 "$(echo "$BODY" | j phases.length)"
 check "currentPhase COMPLETED" COMPLETED "$(echo "$BODY" | j currentPhase)"
@@ -136,7 +136,7 @@ call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "nova run usa 70"
 
 echo "== Safra sem Ym e cultivar alterada desde a run =="
 call POST "/properties/$P/fields" "$ANA" "{\"name\":\"T-MSA-2\",\"geometry\":$SQ,\"altitudeM\":741}"; F3=$(echo "$BODY" | j id)
-PARAMS='"tBase":10,"gdaTotal":1200,"gdaF1End":120,"gdaF2End":450,"gdaF3End":900,"kcIni":0.2,"kcMid":1.15,"kcEnd":0.5,"depletionFraction":0.5,"zrIni":0.3,"zrMax":0.95,"kyF1":0.2,"kyF2":0.8,"kyF3":1.0,"kyF4":0.4'
+PARAMS='"tBase":10,"tUpper":30,"gdaTotal":1200,"gdaF1End":120,"gdaF2End":450,"gdaF3End":900,"kcIni":0.2,"kcMid":1.15,"kcEnd":0.5,"depletionFraction":0.5,"zrIni":0.3,"zrMax":0.95,"kyF1":0.2,"kyF2":0.8,"kyF3":1.0,"kyF4":0.4'
 call POST /cultivars "$ANA" "{\"name\":\"Soja MSA\",$PARAMS}"; check "cultivar própria → 201" 201 "$STATUS"; C=$(echo "$BODY" | j id)
 call POST /harvests "$ANA" "{\"fieldId\":\"$F3\",\"cultivarId\":\"$C\",\"emergenceDate\":\"$EMERGENCE\",\"season\":\"2025/26\"}"; H3=$(echo "$BODY" | j id); check "safra sem Ym → 201" 201 "$STATUS"; check "expectedYield null" null "$(echo "$BODY" | j expectedYield)"
 call POST "/harvests/$H3/msa/process?sync=true" "$ADMIN"; check "processa sem Ym → 201" 201 "$STATUS"

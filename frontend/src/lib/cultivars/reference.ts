@@ -1,18 +1,25 @@
 /** Divergência e sincronização com a cultivar de referência (espelho de cultivar.service.fieldsToSync). */
-import { CULTIVAR_PARAM_KEYS, type CultivarParamKey, type CultivarParams, type SyncReferenceMode } from '../api/types';
+import { CULTIVAR_PARAM_KEYS, NULLABLE_PARAM_KEYS, type CultivarParamKey, type CultivarParams, type SyncReferenceMode } from '../api/types';
 
-/** Converte os valores do formulário ("1,15") em números; campo vazio/inválido vira NaN. */
-export function toNumbers(values: Partial<Record<CultivarParamKey, string | number>>): Record<CultivarParamKey, number> {
-  const out = {} as Record<CultivarParamKey, number>;
+const isNullable = (k: CultivarParamKey) => (NULLABLE_PARAM_KEYS as readonly string[]).includes(k);
+
+/** Valores numéricos por chave; `null` só nas chaves anuláveis (vazio = sem valor), NaN nas demais quando vazias/inválidas. */
+export type ParamValues = Record<CultivarParamKey, number | null>;
+
+/** Converte os valores do formulário ("1,15") em números; vazio vira `null` nas chaves anuláveis e NaN nas demais. */
+export function toNumbers(values: Partial<Record<CultivarParamKey, string | number | null>>): ParamValues {
+  const out = {} as ParamValues;
   for (const k of CULTIVAR_PARAM_KEYS) {
     const v = values[k];
-    out[k] = typeof v === 'number' ? v : v == null || v === '' ? Number.NaN : Number(String(v).replace(',', '.'));
+    if (typeof v === 'number') out[k] = v;
+    else if (v == null || v === '') out[k] = isNullable(k) ? null : Number.NaN;
+    else out[k] = Number(String(v).replace(',', '.'));
   }
   return out;
 }
 
-/** Parâmetros cujo valor atual difere da referência (NaN conta como divergente). */
-export function divergentFields(current: Record<CultivarParamKey, number>, reference: CultivarParams): CultivarParamKey[] {
+/** Parâmetros cujo valor atual difere da referência (NaN conta como divergente; null === null é igual). */
+export function divergentFields(current: ParamValues, reference: CultivarParams): CultivarParamKey[] {
   return CULTIVAR_PARAM_KEYS.filter((k) => current[k] !== reference[k]);
 }
 
@@ -21,7 +28,7 @@ export function divergentFields(current: Record<CultivarParamKey, number>, refer
  * (o técnico não mexeu) e diferentes da referência atual; `all`: todos os diferentes.
  */
 export function fieldsToSync(
-  current: Record<CultivarParamKey, number>,
+  current: ParamValues,
   snapshot: Partial<CultivarParams> | null,
   reference: CultivarParams,
   mode: SyncReferenceMode,

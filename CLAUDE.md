@@ -30,9 +30,12 @@
 ### Cultura Soja (plantio direto, Cerrado)
 Soja é a **única cultura** da Fase 1 (enum `Crop` só com `SOJA`; `crop` não é aceito na criação de cultivar). Nova cultivar nasce pré-preenchida da referência tabelada (`GET /cultivars/reference`, `referenceSnapshot`, `POST /cultivars/:id/sync-reference`).
 
+Graus-dia pelo **método de Ometto (1981)**, cinco casos em função das temperaturas-base inferior (T_base) e superior (T_B); sem T_B só os casos 1–3; T_B só atua quando Tmax > T_B; Tmin ≥ T_B ⇒ teto T_B − T_base. O residual `(Tmax+Tmin)/2 − T_base` do motor ≤ 2.0.0 é o caso 1. Fórmulas em `docs/msa/algoritmos.md` §1; código em `engine/gda.ts` (`dailyGDA(tmax, tmin, tBase, tUpper?)`).
+
 | Parâmetro | Valor |
 |---|---|
 | T_base | 10°C |
+| T_B (base superior, Ometto) | 30 °C (provisório — questão #10; `tUpper`, opcional) |
 | Kc_ini (plantio direto) | 0,20 |
 | Kc_mid | 1,15 |
 | Kc_end | 0,50 |
@@ -48,7 +51,7 @@ Soja é a **única cultura** da Fase 1 (enum `Crop` só com `SOJA`; `crop` não 
 | F3 — Floração/Enchimento | 450–900 | 1,00 |
 | F4 — Maturação | 900–1.200 | 0,40 |
 
-### Predição de produtividade (motor determinístico, `ENGINE_VERSION` 2.0.0)
+### Predição de produtividade (motor determinístico, `ENGINE_VERSION` 2.1.0)
 - **Ym** (produtividade potencial) informada por safra em sc/ha (`expectedYield`, > 0 e ≤ 250 — `EXPECTED_YIELD_MAX_SC_HA`); a run grava um snapshot; alterar a Ym depois exige reprocessar
 - Redução por janela: $RY_j = Ky_j (1 - \overline{Ks}_j)$ (FAO-33, Eq. 3.2)
 - Índice do ciclo: $Y_a/Y_m = \prod_j [1 - Ky_j (1 - \overline{Ks}_j)]$ sobre as janelas alcançadas; janela não alcançada = fator 1 (`phasesReached` 0–4)

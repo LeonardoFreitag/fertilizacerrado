@@ -1,6 +1,6 @@
 /** Espelho de backend/src/modules/cultivars/dtos (faixas FAO-56/FAO-33 e relações). */
 import { z } from 'zod';
-import type { CultivarParamKey } from '../api/types';
+import type { CultivarParamKey, CultivarParams } from '../api/types';
 
 const number = (schema: z.ZodNumber) =>
   z.preprocess((v) => {
@@ -13,8 +13,16 @@ const ky = z.number({ required_error: 'obrigatório', invalid_type_error: 'obrig
 const gda = z.number({ required_error: 'obrigatório', invalid_type_error: 'obrigatório' }).gt(0, 'deve ser maior que 0');
 const zr = z.number({ required_error: 'obrigatório', invalid_type_error: 'obrigatório' }).gt(0, 'deve ser maior que 0').max(3, 'deve ser no máximo 3 m');
 
+/** Campo opcional: vazio ⇒ null (sem limite superior); vírgula decimal aceita. */
+const nullableNumber = (schema: z.ZodNumber) =>
+  z.preprocess((v) => {
+    if (v === '' || v === null || v === undefined) return null;
+    return typeof v === 'string' ? Number(v.replace(',', '.')) : v;
+  }, schema.nullable());
+
 export const cultivarParamsShape = {
   tBase: number(z.number({ required_error: 'obrigatório', invalid_type_error: 'obrigatório' }).min(0, 'deve ser no mínimo 0 °C').max(20, 'deve ser no máximo 20 °C')),
+  tUpper: nullableNumber(z.number({ invalid_type_error: 'informe um número' }).min(15, 'deve ser no mínimo 15 °C').max(50, 'deve ser no máximo 50 °C')),
   gdaTotal: number(z.number({ required_error: 'obrigatório', invalid_type_error: 'obrigatório' }).min(300, 'deve ser no mínimo 300 °C·dia').max(4000, 'deve ser no máximo 4000 °C·dia')),
   gdaF1End: number(gda),
   gdaF2End: number(gda),
@@ -32,8 +40,9 @@ export const cultivarParamsShape = {
 } satisfies Record<CultivarParamKey, z.ZodTypeAny>;
 
 /** Relações entre campos; o erro aponta o campo à direita da desigualdade (como a API). */
-export function refineCultivarParams(v: Record<CultivarParamKey, number>, ctx: z.RefinementCtx): void {
+export function refineCultivarParams(v: CultivarParams, ctx: z.RefinementCtx): void {
   const issue = (path: CultivarParamKey, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+  if (v.tUpper != null && v.tUpper <= v.tBase) issue('tUpper', 'deve ser maior que a temperatura-base');
   if (v.gdaF2End <= v.gdaF1End) issue('gdaF2End', 'deve ser maior que gdaF1End');
   if (v.gdaF3End <= v.gdaF2End) issue('gdaF3End', 'deve ser maior que gdaF2End');
   if (v.gdaF3End >= v.gdaTotal) issue('gdaF3End', 'deve ser menor que gdaTotal');
@@ -56,12 +65,13 @@ export const cultivarSchema = z
 export type CultivarForm = z.infer<typeof cultivarSchema>;
 
 /** Grupos exibidos no formulário, com rótulo, unidade e ajuda. */
-export const CULTIVAR_GROUPS: { title: string; help: string; fields: { key: CultivarParamKey; label: string; unit?: string; step?: string }[] }[] = [
+export const CULTIVAR_GROUPS: { title: string; help: string; fields: { key: CultivarParamKey; label: string; unit?: string; step?: string; optional?: boolean; help?: string }[] }[] = [
   {
     title: 'Térmicos',
-    help: 'Graus-dia acumulados (GDA) que definem o ciclo. Os limiares encerram F1, F2 e F3; F4 vai até o GDA total.',
+    help: 'Graus-dia pelo método de Ometto (1981): o dia acumula calor entre a temperatura-base e a temperatura-base superior. Os limiares encerram F1, F2 e F3; F4 vai até o GDA total.',
     fields: [
       { key: 'tBase', label: 'Temperatura-base', unit: '°C', step: '0.1' },
+      { key: 'tUpper', label: 'Temperatura-base superior', unit: '°C', step: '0.1', optional: true, help: 'Acima desta temperatura o dia acumula menos graus-dia (Ometto); vazio = sem limite superior.' },
       { key: 'gdaTotal', label: 'GDA total do ciclo', unit: '°C·dia', step: '1' },
       { key: 'gdaF1End', label: 'Fim de F1', unit: '°C·dia', step: '1' },
       { key: 'gdaF2End', label: 'Fim de F2', unit: '°C·dia', step: '1' },

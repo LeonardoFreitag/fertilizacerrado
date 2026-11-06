@@ -139,8 +139,10 @@ model Cultivar {
   name              String
   crop              Crop
   cycleDescription  String?  @map("cycle_description")
-  /// Temperatura-base (°C)
+  /// Temperatura-base inferior Tb (°C)
   tBase             Float    @map("t_base")
+  /// Temperatura-base superior TB (°C) do método de Ometto; nulo = sem limite superior
+  tUpper            Float?   @map("t_upper")
   /// GDA total do ciclo (°C·dia)
   gdaTotal          Float    @map("gda_total")
   /// Limiares de GDA acumulado que encerram F1, F2 e F3 (F4 vai até gdaTotal)

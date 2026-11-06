@@ -94,7 +94,7 @@ export function runDailyBalance(
     assertFinite(day.precipitation, 'precipitation', i);
     if (day.tmean !== undefined) assertFinite(day.tmean, 'tmean', i);
 
-    const gda = dailyGDA(day.tmax, day.tmin, cultivar.tBase);
+    const gda = dailyGDA(day.tmax, day.tmin, cultivar.tBase, cultivar.tUpper ?? null);
     gdaAccum += gda;
     const phase = phaseFromGDA(gdaAccum, cultivar);
     const zr = rootDepth(gdaAccum, cultivar);

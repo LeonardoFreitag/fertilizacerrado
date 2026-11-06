@@ -1,6 +1,6 @@
 # Validação do motor MSA
 
-Ferramentas do protocolo de `docs/msa/validacao.md`. Rodam no host, sem banco.
+Ferramentas do protocolo de `docs/msa/validacao.md`. Rodam no host; só `msa:validate-gda --cell` usa o banco (`DATABASE_URL`).
 
 ## ET₀ (Caso 1 — CROPWAT)
 
@@ -32,3 +32,21 @@ Para dados do CLIMWAT/CROPWAT de Goiânia (tabela do Caso 1: T média, UR, u2, R
 Não há script próprio: o Caso 2 usa a exportação CSV do painel (série diária) comparada ao CROPWAT 8.0 em planilha, conforme `docs/msa/roteiro-validacao.md` (Fase 2). Quando a safra histórica tem produtividade observada, compare também a `predictedYield` da run com a observada pelo erro relativo `(predita − observada) / observada` — `relativeError()` em `metrics.ts` — e registre o valor no relatório.
 
 `examples/synthetic-cerrado-season.csv` é a série sintética de 150 dias (`syntheticSeason(150, 2026)` em `src/modules/msa/synthetic-season.ts`), usada pelos testes de serviço como safra de referência sem dados ERA5-Land.
+
+## Graus-dia (Caso 5 — residual × Ometto × Ometto com TB)
+
+```bash
+cd backend
+pnpm msa:validate-gda -- --synthetic 150                                  # safra sintética (semente 2026)
+pnpm msa:validate-gda -- scripts/validation/examples/synthetic-cerrado-season.csv --out dados/gda.csv
+DATABASE_URL=postgresql://... pnpm msa:validate-gda -- --cell -16.7,-49.3 --from 2025-10-25 --tupper 30
+```
+
+Para a mesma série, acumula graus-dia por três métodos — `residual` (`max((Tmax+Tmin)/2 − Tb, 0)`, o do motor ≤ 2.0.0, reimplementado no script), `ometto` (motor, sem TB) e `ometto-tb` (motor, TB = `--tupper`, padrão 30 °C) — e imprime, por método e janela F1–F4 da cultivar de referência, início, fim e dias; o dia em que `gdaTotal` é atingido; o GDA ao fim; e a diferença de dias `ometto-tb − residual`. Descritivo, sem critério de aceitação: alimenta a tabela da dissertação. `--out` grava `metodo;janela;inicio;fim;dias;gda_fim`.
+
+| Opção | Padrão | Observação |
+|---|---|---|
+| `<clima.csv>` / `--synthetic [dias]` / `--cell lat,lon --from AAAA-MM-DD [--to …]` | — | CSV com `date, tmax, tmin`; sintética determinística; ou `era5_daily_data` da célula |
+| `--tbase` | 10 | temperatura-base inferior (°C) |
+| `--tupper` | 30 | temperatura-base superior (°C); deve ser > `--tbase` |
+| `--cultivar` | soja | só a referência de soja nesta fase |

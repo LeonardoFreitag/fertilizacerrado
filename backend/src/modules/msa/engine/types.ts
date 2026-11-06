@@ -16,8 +16,10 @@ export const YIELD_PHASES: readonly YieldPhase[] = ['F1', 'F2', 'F3', 'F4'];
 
 /** Parâmetros da cultivar consumidos pelo motor (mesmos nomes do model Cultivar). */
 export interface CultivarParams {
-  /** Temperatura-base (°C) */
+  /** Temperatura-base inferior Tb (°C) */
   tBase: number;
+  /** Temperatura-base superior TB (°C) do método de Ometto; null = sem limite superior (casos 1–3) */
+  tUpper: number | null;
   /** GDA total do ciclo (°C·dia) */
   gdaTotal: number;
   /** GDA acumulado que encerra F1 */

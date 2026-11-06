@@ -20,6 +20,10 @@ Interface em <http://localhost> (login com `ADMIN_EMAIL`/`ADMIN_PASSWORD`), API 
 
 Atalhos do `package.json` da raiz: `pnpm stop`, `pnpm logs:api`, `pnpm migrate`, `pnpm test`, `pnpm test:e2e`, `pnpm etl:status`, `pnpm db:backup`, `pnpm db:restore -- backups/<arquivo>.dump`, `pnpm manual:capture` e `pnpm manual:pdf` (imagens e PDF do manual do usuário), `pnpm clean` (remove **todos** os volumes, inclusive o cache ERA5).
 
+### Após atualizar para o motor 2.1.0 (graus-dia de Ometto)
+
+A migration `adopt_ometto_degree_days` é aditiva (coluna `t_upper`, 30 °C na referência e nas cultivares de soja existentes). As janelas fenológicas mudam para a mesma série, então acione **Processar todas as safras ativas** em `/admin`; as runs antigas (2.0.0) ficam no histórico e o painel avisa que os parâmetros da cultivar mudaram até o reprocessamento.
+
 ### Após atualizar para o motor 2.0.0 (predição de produtividade)
 
 A migration `refocus_yield_prediction` é destrutiva: descarta as runs do MSA anteriores (motor 1.x, não reproduzíveis), a tabela de decisões e a cultura milho (falha se houver cultivar de milho em uso). Faça backup antes (`pnpm db:backup`) e, depois do deploy, acione **Processar todas as safras ativas** em `/admin` para recalcular as safras com índice do ciclo e produtividade predita.

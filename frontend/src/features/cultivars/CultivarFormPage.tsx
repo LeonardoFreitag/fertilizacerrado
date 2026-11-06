@@ -20,7 +20,7 @@ type FormValues = { name: string; cycleDescription: string } & Record<CultivarPa
 function toValues(c?: CultivarResponse, reference?: CultivarResponse): FormValues {
   const source = c ?? reference;
   const v = { name: c?.name ?? '', cycleDescription: source?.cycleDescription ?? '' } as FormValues;
-  for (const k of CULTIVAR_PARAM_KEYS) v[k] = source ? String(source[k]) : '';
+  for (const k of CULTIVAR_PARAM_KEYS) v[k] = source && source[k] != null ? String(source[k]) : '';
   return v;
 }
 
@@ -29,7 +29,7 @@ export function cultivarDiff(data: CultivarForm, original: CultivarResponse | un
   const out: CultivarPayload = {};
   if (!original || data.name !== original.name) out.name = data.name;
   if (!original || (data.cycleDescription ?? null) !== original.cycleDescription) out.cycleDescription = data.cycleDescription ?? (original ? null : undefined);
-  for (const k of CULTIVAR_PARAM_KEYS) if (!original || data[k] !== original[k]) out[k] = data[k];
+  for (const k of CULTIVAR_PARAM_KEYS) if (!original || data[k] !== original[k]) (out as Record<string, number | null | string | undefined>)[k] = data[k];
   return out;
 }
 
@@ -103,7 +103,7 @@ export function CultivarFormPage({ readOnly = false }: { readOnly?: boolean }) {
   if (!editing && reference.isError) return <ErrorState error={reference.error} title="Referência indisponível" onRetry={() => reference.refetch()} />;
 
   const title = locked ? existing.data?.name ?? 'Cultivar' : editing ? `Editar — ${existing.data?.name ?? ''}` : 'Nova cultivar';
-  const fmt = (k: CultivarParamKey, step?: string) => formatNumber(reference.data?.[k], STEP_DIGITS[step ?? '0.01'] ?? 2);
+  const fmt = (k: CultivarParamKey, step?: string) => (reference.data?.[k] == null ? '—' : formatNumber(reference.data[k], STEP_DIGITS[step ?? '0.01'] ?? 2));
 
   return (
     <div className="max-w-3xl">
@@ -156,8 +156,8 @@ export function CultivarFormPage({ readOnly = false }: { readOnly?: boolean }) {
                       label={f.unit ? `${f.label} (${f.unit})` : f.label}
                       htmlFor={f.key}
                       error={errors[f.key]?.message}
-                      required={!locked}
-                      help={diverges ? `ref. ${fmt(f.key, f.step)}` : undefined}
+                      required={!locked && !f.optional}
+                      help={[diverges ? `ref. ${fmt(f.key, f.step)}` : null, f.help ?? null].filter(Boolean).join(' · ') || undefined}
                     >
                       <Input id={f.key} inputMode="decimal" step={f.step} invalid={!!errors[f.key]} {...register(f.key)} />
                     </FormField>
@@ -204,7 +204,7 @@ export function CultivarFormPage({ readOnly = false }: { readOnly?: boolean }) {
             <ul className="space-y-1">
               {toSync.map((k) => (
                 <li key={k}>
-                  <code>{k}</code>: {Number.isNaN(current[k]) ? '—' : formatNumber(current[k], 3)} → {formatNumber(reference.data?.[k], 3)}
+                  <code>{k}</code>: {current[k] == null || Number.isNaN(current[k]) ? '—' : formatNumber(current[k], 3)} → {reference.data?.[k] == null ? '—' : formatNumber(reference.data[k], 3)}
                 </li>
               ))}
             </ul>

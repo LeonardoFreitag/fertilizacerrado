@@ -161,7 +161,7 @@ describe('predictedYield', () => {
 });
 
 describe('versão do motor', () => {
-  it('é 2.0.0 (interface sem Monte Carlo e cenários)', () => {
-    expect(ENGINE_VERSION).toBe('2.0.0');
+  it('é 2.1.0 (graus-dia de Ometto; interface compatível)', () => {
+    expect(ENGINE_VERSION).toBe('2.1.0');
   });
 });

@@ -12,8 +12,10 @@ function randomCultivar(rand: () => number): CultivarParams {
   const gdaTotal = uniform(rand, 800, 2500);
   const cuts = [rand(), rand(), rand()].sort((a, b) => a - b).map((f) => 0.05 + 0.9 * f);
   const zrIni = uniform(rand, 0.1, 0.5);
+  const tBase = uniform(rand, 5, 15);
   return {
-    tBase: uniform(rand, 5, 15),
+    tBase,
+    tUpper: rand() < 0.5 ? null : uniform(rand, tBase + 5, 45),
     gdaTotal,
     gdaF1End: cuts[0]! * gdaTotal,
     gdaF2End: cuts[1]! * gdaTotal,
@@ -55,7 +57,7 @@ function randomSeries(rand: () => number, n: number): DailyWeather[] {
 }
 
 describe('invariantes do motor com entradas aleatórias (semente fixa)', () => {
-  it(`${CASES} casos: 0 ≤ Ks ≤ 1, ETc_adj ≤ ETc, 0 ≤ Dr ≤ TAW, Zr e GDA não decrescentes, ET₀ ≥ 0, 0 ≤ índice ≤ 1`, () => {
+  it(`${CASES} casos: 0 ≤ Ks ≤ 1, ETc_adj ≤ ETc, 0 ≤ Dr ≤ TAW, Zr e GDA não decrescentes, 0 ≤ GDA ≤ TB − Tb, ET₀ ≥ 0, 0 ≤ índice ≤ 1`, () => {
     const rand = mulberry32(20261005);
     let rowsChecked = 0;
 
@@ -78,6 +80,8 @@ describe('invariantes do motor com entradas aleatórias (semente fixa)', () => {
         expect(row.dr).toBeLessThanOrEqual(row.taw + 1e-9);
         expect(row.zr).toBeGreaterThanOrEqual(prevZr);
         expect(row.gdaAccum).toBeGreaterThanOrEqual(prevGda);
+        expect(row.gda).toBeGreaterThanOrEqual(0);
+        if (cultivar.tUpper !== null) expect(row.gda).toBeLessThanOrEqual(cultivar.tUpper - cultivar.tBase + 1e-9);
         expect(row.et0).toBeGreaterThanOrEqual(0);
         expect(row.raw).toBeLessThanOrEqual(row.taw);
         expect(Number.isFinite(row.et0 + row.etc + row.etcAdj + row.dr)).toBe(true);
@@ -113,7 +117,7 @@ describe('compatibilidade de tipos com o Prisma', () => {
     const fromDb = {
       id: 'x', name: 'Soja', crop: 'SOJA', cycleDescription: null, isDefault: true, createdById: null, referenceSnapshot: null,
       createdAt: new Date(), updatedAt: new Date(),
-      tBase: 10, gdaTotal: 1200, gdaF1End: 120, gdaF2End: 450, gdaF3End: 900,
+      tBase: 10, tUpper: 30, gdaTotal: 1200, gdaF1End: 120, gdaF2End: 450, gdaF3End: 900,
       kcIni: 0.2, kcMid: 1.15, kcEnd: 0.5, depletionFraction: 0.5, zrIni: 0.3, zrMax: 0.95,
       kyF1: 0.2, kyF2: 0.8, kyF3: 1, kyF4: 0.4,
     } satisfies Cultivar;

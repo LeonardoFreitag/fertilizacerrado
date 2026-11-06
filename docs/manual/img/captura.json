@@ -14,51 +14,51 @@
   },
   "run": {
     "dateFrom": "2025-10-01",
-    "dateTo": "2025-12-16"
+    "dateTo": "2025-12-17"
   },
   "currentPhase": "COMPLETED",
   "phases": [
     {
       "phase": "F1",
-      "days": 6,
+      "days": 7,
       "ksMean": 1,
       "yieldReductionPct": 0,
-      "etcAdjAccum": 8.326642513932764,
+      "etcAdjAccum": 9.204790014817961,
       "precipAccum": 0.009873507699999999
     },
     {
       "phase": "F2",
-      "days": 21,
+      "days": 20,
       "ksMean": 1,
       "yieldReductionPct": 0,
-      "etcAdjAccum": 77.23465075965859,
+      "etcAdjAccum": 73.66187027692762,
       "precipAccum": 20.857073253
     },
     {
       "phase": "F3",
-      "days": 28,
-      "ksMean": 0.8494655031604728,
-      "yieldReductionPct": 15.05344968395272,
-      "etcAdjAccum": 135.9086506014967,
-      "precipAccum": 106.7503226973
+      "days": 29,
+      "ksMean": 0.8588347534028169,
+      "yieldReductionPct": 14.11652465971831,
+      "etcAdjAccum": 141.2533285576581,
+      "precipAccum": 124.3891826973
     },
     {
       "phase": "F4",
       "days": 21,
-      "ksMean": 0.9063534790378288,
-      "yieldReductionPct": 3.745860838486847,
-      "etcAdjAccum": 60.82047250750244,
-      "precipAccum": 118.63344171
+      "ksMean": 0.9168754032695189,
+      "yieldReductionPct": 3.324983869219245,
+      "etcAdjAccum": 61.08469273888367,
+      "precipAccum": 110.11197571
     }
   ],
   "yield": {
     "ym": 65,
-    "yieldIndex": 0.8176457075411293,
-    "predictedYield": 53.14697099017341,
+    "yieldIndex": 0.8302786363889244,
+    "predictedYield": 53.96811136528009,
     "phasesReached": 4,
     "ymText": "65,0 sc/ha",
-    "yieldIndexPct": "81,8 %",
-    "predicted": "53,1 sc/ha",
+    "yieldIndexPct": "83,0 %",
+    "predicted": "54,0 sc/ha",
     "partial": false
   },
   "images": [

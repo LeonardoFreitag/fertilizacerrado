@@ -7,7 +7,7 @@
 > referências); aqui está o *como*: quais arquivos preparar, em que formato,
 > que comando rodar, o que sai e como ler o resultado.
 >
-> Os exemplos de saída das Fases 1 e 4 foram obtidos rodando os scripts reais
+> Os exemplos de saída das Fases 1, 4 e 6 foram obtidos rodando os scripts reais
 > do projeto. Os marcados como **ilustrativo** mostram só o formato.
 
 ---
@@ -26,14 +26,17 @@ estará.
 | 2 | O balanço hídrico diário está correto? A produtividade predita se aproxima da colhida? | MSA × CROPWAT 8.0; predita × observada | exportação + planilha | parcial (sem script) |
 | 4 | A correção de viés melhora a chuva do ERA5? | ERA5 bruto e corrigido × INMET | `etl qm validate` | pronta; faltam dados reais |
 | 5 | Os resultados são reproduzíveis? | run original × reprocessamento | painel + exportação | pronta |
+| 6 | Quanto o método de graus-dia desloca as janelas F1–F4? | residual × Ometto × Ometto com TB | `pnpm msa:validate-gda` | pronta (descritiva, sem critério) |
 
 > A antiga **Fase 3 (convergência do Monte Carlo)** foi removida em 2026-11-02, junto
 > com o módulo estocástico do motor (ver `questoes-abertas.md`, registro da reunião
 > com o professor Adilson). A numeração das Fases 4 e 5 foi mantida para não quebrar
 > referências em notas e no manual.
 
-**Ordem recomendada:** 0 → 1 → 4 → 2 → 5.
-A Fase 2 vem depois da 4 porque o balanço deve ser validado com a chuva já corrigida.
+**Ordem recomendada:** 0 → 1 → 6 → 4 → 2 → 5.
+A Fase 2 vem depois da 4 porque o balanço deve ser validado com a chuva já corrigida,
+e depois da 6 porque as datas das janelas que entram no CROPWAT dependem do método
+de graus-dia (a Fase 6 é descritiva e pode rodar a qualquer momento).
 
 ```
                  ┌────────────┐
@@ -42,6 +45,8 @@ A Fase 2 vem depois da 4 porque o balanço deve ser validado com a chuva já cor
                  └────────────┘        ▼
  CLIMWAT ──► Fase 1: ET₀ ──► Fase 2: balanço hídrico e produtividade ──► Fase 5: reprodução
              (Penman-Monteith)   (Dr, Ks; Ya = Ym × índice do ciclo)
+                                        ▲
+ Tmax/Tmin ─► Fase 6: graus-dia ────────┘  datas das janelas F1–F4 (Ometto × residual)
 ```
 
 ---
@@ -58,7 +63,8 @@ pnpm start          # sobe a stack (banco, API, ETL, interface)
 pnpm status         # todos os serviços devem aparecer como running/healthy
 ```
 
-A Fase 1 roda direto no Mac, sem banco. As Fases 2, 4 e 5 precisam da stack no ar.
+A Fase 1 e a parte sintética da Fase 6 rodam direto no Mac, sem banco. As Fases 2,
+4 e 5, e a Fase 6 com a célula real (`--cell`), precisam da stack no ar.
 
 ### Pasta de trabalho
 
@@ -111,10 +117,11 @@ pnpm test           # testes unitários do backend e da interface
 ```
 
 **Resultado esperado:** todos os testes passando (o backend tem mais de 240).
-Entre eles estão a reprodução dos Exemplos 17 e 18 do FAO-56, os invariantes do
-balanço hídrico (Ks entre 0 e 1, Dr entre 0 e TAW) e o índice de produtividade do
-ciclo (entre 0 e 1; casos de referência do FAO-33, como F2 0,90/Ky 0,8 e
-F3 0,80/Ky 1,0 → 0,736).
+Entre eles estão a reprodução dos Exemplos 17 e 18 do FAO-56, os cinco casos de
+graus-dia de Ometto (Tb 10 °C, TB 30 °C: 28/18 → 13; 34/20 → 16,43; 32/31 → 20,
+o teto), os invariantes do balanço hídrico (Ks entre 0 e 1, Dr entre 0 e TAW,
+GDA do dia entre 0 e TB − Tb) e o índice de produtividade do ciclo (entre 0 e 1;
+casos de referência do FAO-33, como F2 0,90/Ky 0,8 e F3 0,80/Ky 1,0 → 0,736).
 
 **Registrar no `notas.md`:** a data e o identificador do código usado
 (`git log -1 --oneline`, por exemplo `3831940 ...`). Toda a validação deve citar
@@ -341,8 +348,9 @@ date,tmax,tmin,tmean,tdew,u2,rn,precipitation
 4. Gere a tabela diária do balanço (**Irrigation Schedule**, opção sem irrigação)
    e exporte para planilha.
 
-> O CROPWAT trabalha com fases em dias, e o MSA com graus-dia. Fixar no CROPWAT as
-> mesmas datas de transição que o MSA calculou elimina essa diferença da comparação.
+> O CROPWAT trabalha com fases em dias, e o MSA com graus-dia (método de Ometto,
+> com base superior de 30 °C — Fase 6). Fixar no CROPWAT as mesmas datas de
+> transição que o MSA calculou elimina essa diferença da comparação.
 > Diferenças restantes no modo como cada software interpola a chuva e a ET₀ devem
 > ser descritas como fonte de discrepância.
 
@@ -561,6 +569,97 @@ propriedade na dissertação com uma safra real.
 
 ---
 
+## Fase 6 — Métodos de graus-dia (residual × Ometto × Ometto com TB)
+
+**Pergunta:** quanto a troca do método de graus-dia, do residual
+`(Tmax + Tmin)/2 − Tb` para o método de Ometto com temperatura-base superior
+(TB), desloca as datas das janelas F1–F4 e o fim do ciclo?
+
+**Por que importa:** as janelas definem o Ks médio de cada fase, o Ky aplicado e,
+no fim, a produtividade predita. Desde o motor 2.1.0 (novembro de 2026) o sistema
+usa Ometto com TB = 30 °C para a soja, valor provisório (questão aberta nº 10).
+Esta fase mostra o tamanho do efeito e ajuda a discutir o valor de TB. Não há
+critério de aceitação: é uma comparação descritiva (`validacao.md`, Caso 5).
+
+Os três métodos comparados:
+
+| Método | O que é |
+|---|---|
+| `residual` | fórmula do motor até a versão 2.0.0, `max((Tmax + Tmin)/2 − Tb, 0)`, reimplementada no script |
+| `ometto` | método de Ometto só com a base inferior Tb (casos 1–3) |
+| `ometto-tb` | método de Ometto com Tb e TB (os cinco casos), como o motor atual |
+
+### 6.1 Rodar com a safra sintética (sem banco)
+
+```bash
+cd backend
+pnpm msa:validate-gda -- --synthetic 150 --out ../validacao/saida/gda-sintetica.csv
+```
+
+A série é a mesma dos testes de serviço (150 dias a partir de 2025-11-01, gerada
+com semente fixa), então o resultado é sempre o mesmo e serve de teste de fumaça.
+
+### 6.2 Rodar com a célula de Goiânia
+
+Precisa da stack no ar e da série ERA5 da célula em cache (Fase 4, passo 4.3). Use a
+data de emergência da safra escolhida na Fase 2:
+
+```bash
+cd backend
+DATABASE_URL=postgresql://fertiliza:senha@localhost:5432/fertiliza \
+  pnpm msa:validate-gda -- --cell -16.7,-49.3 --from 2025-10-25 \
+  --tbase 10 --tupper 30 --out ../validacao/saida/gda-goiania-tb30.csv
+```
+
+> A `DATABASE_URL` é a mesma do `backend/.env`. Sem `--to`, a série vai até o
+> último dia em cache; o script avisa "não atingido" se o ciclo não fechar.
+
+Para a sensibilidade ao valor de TB, repita com `--tupper 32` e `--tupper 35`,
+mudando o nome do arquivo de saída. Também é aceito um CSV próprio com as colunas
+`date, tmax, tmin` (as demais são ignoradas) no lugar de `--cell`.
+
+### 6.3 Ler a saída
+
+```
+Série: 150 dias (2025-11-01 … 2026-03-30); Tb 10.0 °C; TB 30.0 °C; gdaTotal 1200
+
+método     | janela | início     | fim        | dias
+-----------|--------|------------|------------|-----
+residual   | F1     | 2025-11-01 | 2025-11-08 |    8
+residual   | F2     | 2025-11-09 | 2025-12-01 |   23
+...
+ometto-tb  | F4     | 2026-01-21 | 2026-02-11 |   22
+ometto-tb  | ciclo  | gdaTotal em 2026-02-11; GDA ao fim 2187.4 °C·dia
+
+Diferença de dias por janela (ometto-tb − residual): F1 +0, F2 +1, F3 +1, F4 +1
+Fim do ciclo: residual 2026-02-08 · ometto 2026-02-08 · ometto-tb 2026-02-11
+```
+
+> **Ilustrativo:** formato real do script; as datas e os dias dependem da série.
+
+| Coluna (CSV, separador `;`) | Significado |
+|---|---|
+| `metodo` | `residual`, `ometto` ou `ometto-tb` |
+| `janela` | `F1`…`F4` |
+| `inicio`, `fim` | primeira e última data da janela na série (vazio se não alcançada) |
+| `dias` | número de dias da janela (0 se não alcançada) |
+| `gda_fim` | GDA acumulado ao fim da janela (°C·dia) |
+
+**Como interpretar:** `residual` e `ometto` coincidem enquanto a mínima do dia
+fica acima de Tb (quase sempre, na soja do Cerrado). `ometto-tb` acumula menos nos
+dias em que a máxima passa de TB, por isso nenhuma janela dele começa antes da
+correspondente em `residual`, e as transições tendem a cair alguns dias mais tarde
+nos meses quentes (setembro a novembro). O fim do ciclo é igual ou posterior. Com
+emergência em dezembro ou janeiro, com menos dias acima de 30 °C, a diferença
+diminui.
+
+**Para a dissertação:** uma tabela série × método × janela (início, fim, dias),
+com o fim do ciclo e o GDA ao fim da série; e, se feita a sensibilidade, as
+diferenças de dias para TB = 30, 32 e 35 °C. Relacione o deslocamento com o Ks̄
+por janela e a produtividade predita da Fase 2.
+
+---
+
 ## Registro dos resultados
 
 Para cada execução, anote no `validacao/notas.md`:
@@ -591,6 +690,9 @@ partir do mesmo arquivo e do mesmo comando.
 | `qm validate`: estação inelegível | menos de 10 anos de sobreposição ou mais de 50 km | ampliar o período de ERA5 ou ajustar `QM_MIN_YEARS`/`QM_MAX_DISTANCE_KM` |
 | Arquivo do BDMEP não importa | arquivo editado e salvo pelo Excel | baixar de novo e importar sem abrir |
 | CSV de saída da Fase 4 não aparece | faltou o `-v "$PWD/validacao:/validacao"` | repetir com o parâmetro de volume |
+| `msa:validate-gda`: `coluna tmin ausente` (ou `tmax`) | CSV sem a coluna ou com outro nome | conferir o cabeçalho: `date, tmax, tmin` |
+| `msa:validate-gda`: `--tupper` deve ser maior que `--tbase` | TB menor ou igual a Tb | usar TB acima de Tb (ex.: `--tupper 30`) |
+| `msa:validate-gda --cell` sem dias ou com "não atingido" | série ERA5 da célula incompleta ou curta | `pnpm etl ingest --from ... --to ...` e conferir `--from`/`--to` |
 
 ---
 

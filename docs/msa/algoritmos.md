@@ -3,34 +3,102 @@
 > **Audiência:** Heb Rejane Moreira Pires (pesquisadora), orientadores, banca avaliadora.  
 > **Objetivo:** Rastreabilidade completa entre as equações descritas na dissertação e o código TypeScript implementado.
 
-> **Onde está o código:** o motor de cálculo é a biblioteca de funções puras `backend/src/modules/msa/engine/` (sem banco, API ou ERA5-Land), exportada por `engine/index.ts`. Cada função tem JSDoc com a fonte e o número da equação. Os tipos (`CultivarParams`, `SoilParams`, `DailyWeather`, `DailyBalanceRow`, `PhaseSummary`, `CycleYield`) estão em `engine/types.ts`. As seções 1 a 6 estão implementadas no motor (`ENGINE_VERSION` 2.0.0, determinístico: uma execução do balanço por run); a persistência dos resultados, a fila de jobs e os endpoints estão descritos em `docs/modulos/msa.md`.
+> **Onde está o código:** o motor de cálculo é a biblioteca de funções puras `backend/src/modules/msa/engine/` (sem banco, API ou ERA5-Land), exportada por `engine/index.ts`. Cada função tem JSDoc com a fonte e o número da equação. Os tipos (`CultivarParams`, `SoilParams`, `DailyWeather`, `DailyBalanceRow`, `PhaseSummary`, `CycleYield`) estão em `engine/types.ts`. As seções 1 a 6 estão implementadas no motor (`ENGINE_VERSION` 2.1.0 — graus-dia pelo método de Ometto desde 2026-11-03; determinístico: uma execução do balanço por run); a persistência dos resultados, a fila de jobs e os endpoints estão descritos em `docs/modulos/msa.md`.
 
 > **Escopo (desde 2026-11-02):** o MSA prediz a produtividade da soja frente à produtividade potencial informada por safra. O módulo de Monte Carlo (antiga seção 7) e os cenários de decisão de adubação (antiga seção 8) foram removidos — ver `docs/msa/questoes-abertas.md`, registro da reunião com o professor Adilson.
 
 ---
 
-## 1. Graus-Dia Acumulados (GDA)
+## 1. Graus-Dia Acumulados (GDA) — método de Ometto (1981)
 
 ### Conceito
-O método dos graus-dia quantifica o desenvolvimento fenológico da cultura com base no acúmulo de calor diário acima de uma temperatura-base (T_base), eliminando a dependência do calendário.
+O método dos graus-dia quantifica o desenvolvimento fenológico da cultura pelo acúmulo diário de calor útil ao crescimento, eliminando a dependência do calendário. O motor adota o método de **Ometto (1981)**, que delimita o calor útil por **duas** temperaturas-base da cultura:
 
-### Equação
+- $T_b$ — **temperatura-base inferior** (`tBase`): abaixo dela a planta não se desenvolve. Soja: **10 °C**.
+- $T_B$ — **temperatura-base superior** (`tUpper`, opcional): acima dela o calor adicional **não** acelera o desenvolvimento. Soja: **30 °C**, valor provisório (`docs/msa/questoes-abertas.md`, questão nº 10).
 
-$$GDA_d = \max\left(\frac{T_{max,d} + T_{min,d}}{2} - T_{base},\ 0\right)$$
+Ometto aproxima a marcha diária da temperatura por um triângulo entre $T_{min}$ e $T_{max}$ e toma como graus-dia a parte desse triângulo compreendida entre $T_b$ e $T_B$. Conforme a posição do dia em relação às duas bases, resultam cinco situações: dia inteiro dentro das bases; dia que cruza $T_b$; dia frio; dia que cruza $T_B$; dia que cruza as duas.
 
-$$GDA_{acum} = \sum_{d=1}^{D} GDA_d$$
+### Equações
+
+Com $T_{max,d}$ e $T_{min,d}$ as temperaturas máxima e mínima do dia *d* (°C), o GDA do dia é:
+
+**Caso 1 — $T_b < T_{min} \le T_{max}$ (dia dentro das bases):**
+
+$$GDA_d = \frac{T_{max} - T_{min}}{2} + (T_{min} - T_b)$$
+
+**Caso 2 — $T_{min} < T_b < T_{max}$ (mínima abaixo da base inferior):**
+
+$$GDA_d = \frac{(T_{max} - T_b)^2}{2\,(T_{max} - T_{min})}$$
+
+**Caso 3 — $T_b \ge T_{max}$ (dia frio):**
+
+$$GDA_d = 0$$
+
+**Caso 4 — $T_b < T_{min} \le T_B < T_{max}$ (máxima acima da base superior):**
+
+$$GDA_d = \frac{2\,(T_{max} - T_{min})(T_{min} - T_b) + (T_{max} - T_{min})^2 - (T_{max} - T_B)^2}{2\,(T_{max} - T_{min})}$$
+
+**Caso 5 — $T_{min} < T_b < T_B < T_{max}$ (mínima abaixo de $T_b$ e máxima acima de $T_B$):**
+
+$$GDA_d = \frac{1}{2} \cdot \frac{(T_{max} - T_b)^2 - (T_{max} - T_B)^2}{T_{max} - T_{min}}$$
+
+**Acumulado desde a emergência:**
+
+$$GDA_{acum}(D) = \sum_{d=1}^{D} GDA_d$$
 
 **Onde:**
 - $T_{max,d}$ = temperatura máxima do dia *d* (°C), fonte ERA5-Land (`2m_temperature_max`)
 - $T_{min,d}$ = temperatura mínima do dia *d* (°C), fonte ERA5-Land (`2m_temperature_min`)
-- $T_{base}$ = temperatura-base da cultura (soja: **10°C**; única cultura da Fase 1)
+- $T_b$ = temperatura-base inferior da cultivar (`tBase`; soja: 10 °C; única cultura da Fase 1)
+- $T_B$ = temperatura-base superior da cultivar (`tUpper`; soja: 30 °C, provisório; nula = sem base superior)
 - $GDA_{acum}$ = graus-dia acumulados desde a data de emergência
 
+### Convenções adotadas no motor
+
+- **Sem $T_B$** (`tUpper` nulo ou omitido): só os casos 1–3; o resultado fica em $[0, +\infty)$.
+- **$T_B$ só atua quando $T_{max} > T_B$.** Com $T_{max} = T_B$ os casos 4 e 5 coincidem algebricamente com 1 e 2; da mesma forma, com $T_{min} = T_b$ os casos 1 e 2 coincidem. Os ramos são contínuos nas bordas (testado com tolerância 1e-9).
+- **$T_{min} \ge T_B$** (dia inteiro acima da base superior, possível em ondas de calor): $GDA_d = T_B - T_b$, o **teto** do método. A situação não está na formulação original; a convenção está registrada na questão nº 10 para confirmação da pesquisadora.
+- **$T_{max} = T_{min}$:** não há divisão por zero — o dia cai no caso 1 (se $T_{min} > T_b$) ou no caso 3 ($T_b \ge T_{max}$); os casos 2, 4 e 5 exigem $T_{max} > T_{min}$ por construção.
+- **Faixa do resultado:** $0 \le GDA_d \le T_B - T_b$ com $T_B$; $GDA_d \ge 0$ sem $T_B$. O motor aplica o truncamento final e os testes de invariantes o verificam com `tUpper` aleatório.
+- **Entradas inválidas** — $T_{max} < T_{min}$, valores não finitos ou $T_B \le T_b$ — lançam `RangeError`: indicam erro a montante (série climática ou cultivar), não um resultado.
+
+### Exemplo numérico (soja: $T_b$ = 10 °C, $T_B$ = 30 °C)
+
+| Dia ($T_{max}$ / $T_{min}$) | Caso | Cálculo | $GDA_d$ (°C·dia) | Residual $(T_{max}+T_{min})/2 - T_b$ |
+|---|---|---|---|---|
+| 28 / 18 | 1 | (28 − 18)/2 + (18 − 10) | **13,00** | 13,00 |
+| 20 / 6 | 2 | (20 − 10)² / [2 (20 − 6)] = 100 / 28 | **3,571** | 3,00 |
+| 8 / 2 | 3 | — | **0** | 0 (−5, truncado) |
+| 34 / 20 | 4 | [2 · 14 · 10 + 14² − 4²] / (2 · 14) = 460 / 28 | **16,43** | 17,00 |
+| 34 / 8 | 5 | ½ (24² − 4²) / 26 = 280 / 26 | **10,77** | 11,00 |
+| 32 / 31 | teto ($T_{min} \ge T_B$) | 30 − 10 | **20,00** | 21,50 |
+| 25 / 25 | 1 ($T_{max} = T_{min}$) | 0 + (25 − 10) | **15,00** | 15,00 |
+
+Acumulado de três dias (34/20), (28/18), (34/8): 16,43 → 29,43 → 40,20 °C·dia.
+
+Leitura do caso 4, o mais frequente no Cerrado: num dia de 34/20 °C, típico de setembro a novembro, o método residual conta 17 °C·dia; Ometto com $T_B$ = 30 °C conta 16,43 — os 4 °C acima da base superior não aceleram o desenvolvimento. Nas janelas da soja, $T_{min}$ raramente cai abaixo de $T_b$ (casos 2 e 5 são raros); o efeito relevante vem dos dias com $T_{max} > T_B$, que, somado ao longo da safra, **adia** as transições F2–F4 em relação ao calendário do motor 2.0.0. O deslocamento é quantificado no Caso 5 de `docs/msa/validacao.md` (`pnpm msa:validate-gda`).
+
+### Nota sobre o motor ≤ 2.0.0 (método residual)
+
+Até `ENGINE_VERSION` 2.0.0 o motor calculava
+
+$$GDA_d = \max\left(\frac{T_{max} + T_{min}}{2} - T_b,\ 0\right)$$
+
+embora já citasse Ometto (1981) como fonte. Esse método residual é exatamente o **caso 1** de Ometto — basta rearranjar: $(T_{max} - T_{min})/2 + (T_{min} - T_b) = (T_{max} + T_{min})/2 - T_b$. Os dois motores coincidem sempre que $T_{min} \ge T_b$ e $T_{max} \le T_B$ (ou sem $T_B$) e diferem nos dias que cruzam uma das bases. Runs com `engineVersion` 2.0.0 permanecem no histórico (o `cultivarSnapshot` delas não tem `tUpper`), e o painel acusa "parâmetros da cultivar mudaram desde esta execução", sugerindo reprocessar.
+
 ### Referência bibliográfica
-> OMETO, J.C. (1981). *Bioclimatologia vegetal*. São Paulo: Editora Agronômica Ceres.
+> OMETTO, J.C. (1981). *Bioclimatologia vegetal*. São Paulo: Editora Agronômica Ceres. — método das temperaturas-base inferior e superior, cinco situações.
 
 ### Implementação
-`src/modules/msa/engine/gda.ts` → `dailyGDA(tmax, tmin, tBase)` e `accumulateGDA(series, tBase)`
+`src/modules/msa/engine/gda.ts`:
+
+| Função | O que calcula |
+|---|---|
+| `dailyGDA(tmax, tmin, tBase, tUpper?)` | $GDA_d$ pelos cinco casos e convenções acima; `tUpper` nulo ou omitido = sem base superior |
+| `accumulateGDA(series, tBase, tUpper?)` | $GDA_{acum}$ dia a dia, série do mesmo tamanho da entrada |
+
+Chamadores: `runDailyBalance` (`engine/water-balance.ts`, passo 1 de cada dia, com `cultivar.tUpper ?? null`) e `resolveInterval` (`src/modules/msa/msa.service.ts`), que percorre a série desde a emergência até atingir `gdaTotal` para fixar o intervalo da run. Testes: `gda-phenology-kc.test.ts` (os sete cenários da tabela; bordas $T_{min} = T_b$, $T_{max} = T_B$, $T_{max} = T_{min}$, $T_{min} \ge T_B$; continuidade; regressão com o residual sem $T_B$; entradas inválidas) e `invariants.test.ts` ($0 \le GDA_d \le T_B - T_b$ com `tUpper` nulo ou aleatório).
 
 ---
 
@@ -286,8 +354,9 @@ O serviço (`src/modules/msa/msa.service.ts`, `runProcessing` → `yieldFields(c
 | $Ks$ | Coeficiente de estresse hídrico | 0–1 |
 | $Ky$ | Coeficiente de sensibilidade ao estresse | adimensional |
 | $RY_j$ | Redução relativa de produtividade na janela $j$ = $Ky_j (1 - \overline{Ks}_j)$ | 0–1 |
-| $GDA$ | Graus-dia acumulados | °C·dia |
-| $T_{base}$ | Temperatura-base da cultura | °C |
+| $GDA$ | Graus-dia acumulados (método de Ometto, 1981 — §1) | °C·dia |
+| $T_b$ | Temperatura-base inferior da cultivar (`tBase`; soja 10 °C) | °C |
+| $T_B$ | Temperatura-base superior da cultivar (`tUpper`, opcional; soja 30 °C, provisório — questão nº 10); acima dela o dia não acumula calor adicional (Ometto) | °C |
 | $TAW$ | Total de água disponível | mm |
 | $RAW$ | Água prontamente disponível | mm |
 | $Dr$ | Depleção na zona radicular | mm |

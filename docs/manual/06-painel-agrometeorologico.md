@@ -72,7 +72,7 @@ A barra colorida mostra o ciclo dividido em quatro janelas:
 | **F3** | Floração e enchimento de grãos | 28/10 a 24/11, 28 dias |
 | **F4** | Maturação | 25/11 a 16/12, 22 dias |
 
-A largura de cada faixa é proporcional à duração. As datas não são fixas: o sistema as calcula pelo calor acumulado desde a emergência, os [graus-dia](08-perguntas-e-glossario.md#gda-graus-dia-acumulados). Em um ano mais quente as janelas ficam mais curtas.
+A largura de cada faixa é proporcional à duração. As datas não são fixas: o sistema as calcula pelo calor acumulado desde a emergência, os [graus-dia](08-perguntas-e-glossario.md#gda-graus-dia-acumulados). Em um ano mais quente as janelas ficam mais curtas, mas o calor acima da [temperatura-base superior](08-perguntas-e-glossario.md#temperatura-base-superior-tb) da cultivar (30 °C na soja de referência) não conta: dias muito quentes acumulam um pouco menos graus-dia do que a temperatura média sugere.
 
 Em uma safra em andamento, um traço vertical marca o dia de hoje. As janelas que ainda não chegaram aparecem em cinza, com a indicação **não alcançada**.
 
@@ -95,7 +95,7 @@ A cor do cartão vem do **Ks médio** da janela:
 | Vermelho | **crítico** | abaixo de 0,70 | Falta de água severa |
 | Cinza | **não alcançada** | — | A lavoura ainda não chegou a essa janela |
 
-No exemplo, F1 e F2 estão verdes com Ks 1,00. F3 está amarela. F4 está verde, com Ks 0,91<!-- valor:phases.F4.ksMean|2 -->.
+No exemplo, os quatro cartões estão verdes: F1 e F2 com Ks 1,00, F3 com Ks 0,86 — logo acima do limite de 0,85, ou seja, quase em **atenção** — e F4 com Ks 0,92<!-- valor:phases.F4.ksMean|2 -->.
 
 ### Como ler um cartão
 
@@ -103,13 +103,13 @@ No exemplo, F1 e F2 estão verdes com Ks 1,00. F3 está amarela. F4 está verde,
 
 O cartão de F3, floração e enchimento, mostra:
 
-- **Ks médio: 0,85<!-- valor:phases.F3.ksMean|2 -->.** Na média dos 28<!-- valor:phases.F3.days|0 --> dias da janela, a lavoura usou 85% da água de que precisava. O valor exato fica um pouco abaixo de 0,85, e por isso o cartão está em **atenção**.
+- **Ks médio: 0,86<!-- valor:phases.F3.ksMean|2 -->.** Na média dos 29<!-- valor:phases.F3.days|0 --> dias da janela, a lavoura usou 86% da água de que precisava. O valor fica logo acima de 0,85, por isso o cartão ainda está **ok**; um pouco menos de chuva e ele passaria a **atenção**.
 
-- **Redução potencial de produtividade: 15,1<!-- valor:phases.F3.yieldReductionPct|1 -->%.** É a estimativa de quanto da produtividade pode ter sido perdida nessa janela só pela falta de água. Ela combina o Ks médio com a sensibilidade da janela, o [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse).
+- **Redução potencial de produtividade: 14,1<!-- valor:phases.F3.yieldReductionPct|1 -->%.** É a estimativa de quanto da produtividade pode ter sido perdida nessa janela só pela falta de água. Ela combina o Ks médio com a sensibilidade da janela, o [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse).
 
-- **ETc ajustada acumulada: 135,9<!-- valor:phases.F3.etcAdjAccum|1 --> mm.** A água que a lavoura realmente usou na janela.
+- **ETc ajustada acumulada: 141,3<!-- valor:phases.F3.etcAdjAccum|1 --> mm.** A água que a lavoura realmente usou na janela.
 
-- **Chuva acumulada: 106,8<!-- valor:phases.F3.precipAccum|1 --> mm.** O total de chuva da janela. Compare com o seu pluviômetro.
+- **Chuva acumulada: 124,4<!-- valor:phases.F3.precipAccum|1 --> mm.** O total de chuva da janela. Compare com o seu pluviômetro.
 
 - **Dias na janela:** a duração da janela.
 
@@ -117,7 +117,7 @@ Os termos estão no glossário: [redução potencial de produtividade](08-pergun
 
 ### Por que a mesma falta de água pesa diferente
 
-Compare F3 e F4 no exemplo. O Ks de F4 é 0,91, não muito acima do de F3. Mas a redução estimada em F4 é de 3,7<!-- valor:phases.F4.yieldReductionPct|1 -->%, contra 15,1% em F3.
+Compare F3 e F4 no exemplo. O Ks de F4 é 0,92, não muito acima do de F3. Mas a redução estimada em F4 é de 3,3<!-- valor:phases.F4.yieldReductionPct|1 -->%, contra 14,1% em F3.
 
 A diferença está na sensibilidade da planta. Na floração e no enchimento de grãos a soja é muito mais sensível à falta de água que na maturação. O sistema leva isso em conta por meio do [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse) de cada janela.
 
@@ -141,16 +141,16 @@ No exemplo:
 |---|---|---|---|
 | F1 | 1,00 | 0,0% | 1,000 |
 | F2 | 1,00 | 0,0% | 1,000 |
-| F3 | 0,85 | 15,1% | 0,849 |
-| F4 | 0,91 | 3,7% | 0,963 |
+| F3 | 0,86 | 14,1% | 0,859 |
+| F4 | 0,92 | 3,3% | 0,967 |
 
 ### Os três números da direita
 
 - **Produtividade potencial (Ym): 65,0<!-- valor:yield.ym|1 --> sc/ha.** É o valor informado no cadastro da safra: quanto a lavoura renderia sem falta de água. Veja o [capítulo 5](05-safras.md#sobre-a-produtividade-potencial).
 
-- **Índice do ciclo: 81,8 %<!-- valor:yield.yieldIndexPct|1 -->.** É o produto dos quatro fatores: 1,000 × 1,000 × 0,849 × 0,963 = 0,818. A leitura é direta: a estimativa é que a safra renda 81,8% da produtividade potencial. A falta de água na floração responde pela maior parte da perda.
+- **Índice do ciclo: 83,0 %<!-- valor:yield.yieldIndexPct|1 -->.** É o produto dos quatro fatores: 1,000 × 1,000 × 0,859 × 0,967 = 0,830. A leitura é direta: a estimativa é que a safra renda 83,0% da produtividade potencial. A falta de água na floração responde pela maior parte da perda.
 
-- **Produtividade predita: 53,1<!-- valor:yield.predicted|1 --> sc/ha.** É a produtividade potencial multiplicada pelo índice: 65 × 0,818 = 53,1 sc/ha. A diferença para a Ym, cerca de 12 sacas, é a estimativa do que a falta de água custou nessa safra.
+- **Produtividade predita: 54,0<!-- valor:yield.predicted|1 --> sc/ha.** É a produtividade potencial multiplicada pelo índice: 65 × 0,830 = 54,0 sc/ha. A diferença para a Ym, cerca de 11 sacas, é a estimativa do que a falta de água custou nessa safra.
 
 A linha **4 de 4 janelas alcançadas**, no alto do bloco, diz quantas janelas já entraram na conta com dados reais. A fórmula está escrita abaixo do título do bloco, para quem quiser conferir; a explicação completa está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
 

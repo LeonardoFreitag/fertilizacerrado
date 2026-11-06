@@ -4,12 +4,12 @@ import { CULTIVAR_PARAM_KEYS, cultivarParamsSchema, type CultivarParams } from '
 import { updateCultivarSchema } from './update-cultivar.dto';
 
 const soja: CultivarParams = {
-  tBase: 10, gdaTotal: 1200, gdaF1End: 120, gdaF2End: 450, gdaF3End: 900,
+  tBase: 10, tUpper: 30, gdaTotal: 1200, gdaF1End: 120, gdaF2End: 450, gdaF3End: 900,
   kcIni: 0.2, kcMid: 1.15, kcEnd: 0.5, depletionFraction: 0.5, zrIni: 0.3, zrMax: 0.95,
   kyF1: 0.2, kyF2: 0.8, kyF3: 1.0, kyF4: 0.4,
 };
 const milho: CultivarParams = {
-  tBase: 10, gdaTotal: 1500, gdaF1End: 150, gdaF2End: 600, gdaF3End: 1150,
+  tBase: 10, tUpper: null, gdaTotal: 1500, gdaF1End: 150, gdaF2End: 600, gdaF3End: 1150,
   kcIni: 0.3, kcMid: 1.2, kcEnd: 0.6, depletionFraction: 0.55, zrIni: 0.3, zrMax: 1.0,
   kyF1: 0.4, kyF2: 0.4, kyF3: 1.5, kyF4: 0.5,
 };
@@ -20,9 +20,19 @@ function errorFields(input: unknown): string[] {
 }
 
 describe('cultivarParamsSchema', () => {
-  it('aceita as duas cultivares de referência', () => {
+  it('aceita a referência de soja (tUpper 30) e um conjunto sem limite superior (tUpper null)', () => {
     expect(errorFields(soja)).toEqual([]);
     expect(errorFields(milho)).toEqual([]);
+    expect(cultivarParamsSchema.parse(milho).tUpper).toBeNull();
+  });
+
+  it('tUpper: exige > tBase e faixa 15–50, apontando tUpper; ausente é erro', () => {
+    expect(errorFields({ ...soja, tUpper: 10 })).toEqual(['tUpper']);
+    expect(errorFields({ ...soja, tUpper: 8 })).toEqual(['tUpper']);
+    expect(errorFields({ ...soja, tUpper: 55 })).toEqual(['tUpper']);
+    expect(errorFields({ ...soja, tBase: 18, tUpper: 18 })).toEqual(['tUpper']);
+    const { tUpper: _t, ...without } = soja;
+    expect(errorFields(without)).toEqual(['tUpper']);
   });
 
   it.each([
@@ -66,7 +76,8 @@ describe('cultivarParamsSchema', () => {
   it('exige todos os parâmetros', () => {
     const { kyF3: _k, ...incomplete } = soja;
     expect(errorFields(incomplete)).toEqual(['kyF3']);
-    expect(CULTIVAR_PARAM_KEYS).toHaveLength(15);
+    expect(CULTIVAR_PARAM_KEYS).toHaveLength(16);
+    expect(CULTIVAR_PARAM_KEYS).toContain('tUpper');
   });
 });
 

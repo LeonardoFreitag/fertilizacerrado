@@ -7,7 +7,7 @@ import { session } from '@/lib/auth/session';
 import { findRunSince, useMsaPolling } from './useMsaPolling';
 
 const run = (startedAt: string, status: RunView['status'] = 'SUCCEEDED'): RunView =>
-  ({ id: `r-${startedAt}`, harvestId: 'h', status, reason: 'BACKFILL', jobId: null, startedAt, finishedAt: startedAt, dateFrom: '2025-11-01', dateTo: '2026-03-01', expectedYield: 65, yieldIndex: 0.9, predictedYield: 58.5, phasesReached: 4, engineVersion: '2.0.0', cultivarSnapshot: {}, soilSnapshot: {}, missingDates: null, error: null, triggeredById: null, qmCalibrationId: null, qmCalibration: null }) as RunView;
+  ({ id: `r-${startedAt}`, harvestId: 'h', status, reason: 'BACKFILL', jobId: null, startedAt, finishedAt: startedAt, dateFrom: '2025-11-01', dateTo: '2026-03-01', expectedYield: 65, yieldIndex: 0.9, predictedYield: 58.5, phasesReached: 4, engineVersion: '2.1.0', cultivarSnapshot: {}, soilSnapshot: {}, missingDates: null, error: null, triggeredById: null, qmCalibrationId: null, qmCalibration: null }) as RunView;
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

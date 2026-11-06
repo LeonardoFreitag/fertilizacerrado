@@ -32,6 +32,8 @@ export const REFERENCE_CULTIVARS: readonly ReferenceCultivar[] = [
     cycleDescription:
       'Ciclo médio (~1200 °C·dia). Janelas: F1 0–120, F2 120–450, F3 450–900, F4 900–1200 °C·dia.',
     tBase: 10,
+    // Temperatura-base superior (Ometto) — valor provisório; ver docs/msa/questoes-abertas.md #10
+    tUpper: 30,
     gdaTotal: 1200,
     gdaF1End: 120,
     gdaF2End: 450,

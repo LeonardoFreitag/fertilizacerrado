@@ -51,6 +51,9 @@ Não. Uma cultivar nova nasce como cópia da referência. Altere só o que você
 **A referência mudou. Minhas cultivares mudam junto?**
 Não. Use **Atualizar a partir da referência**, na tela de edição da cultivar, e escolha se quer trazer só os campos que você não alterou ou todos. Veja o [capítulo 4](04-cultivares.md#atualizar-a-partir-da-referência).
 
+**O painel diz que os parâmetros da cultivar mudaram, mas não mexi em nada.**
+É efeito de uma atualização do sistema. Com a adoção do método de Ometto para os graus-dia, toda cultivar ganhou um parâmetro novo, a [temperatura-base superior](#temperatura-base-superior-tb), preenchida com 30 °C. As execuções feitas antes dessa atualização não tinham esse parâmetro, e por isso o painel avisa que a cultivar mudou. Clique em **Reprocessar**: a nova execução usa o método atual, e o aviso some. As datas das janelas podem mudar alguns dias em relação à execução antiga; é o esperado.
+
 ### Safras e painel
 
 **Cadastrei a safra e o painel não apareceu.**
@@ -117,11 +120,11 @@ Cada vez que o sistema processa uma safra, ele guarda uma execução completa, c
 
 ### GDA (graus-dia acumulados)
 
-Medida do calor que a planta acumulou desde a emergência. A cada dia soma-se quanto a temperatura média ficou acima da temperatura-base da cultura. A planta muda de fase quando atinge certos valores de GDA, e não em datas fixas.
+Medida do calor que a planta acumulou desde a emergência. A cada dia soma-se o calor útil daquele dia, calculado pelo método de Ometto a partir das temperaturas mínima e máxima: conta o calor acima da temperatura-base (10 °C na soja) e, se a cultivar tem [temperatura-base superior](#temperatura-base-superior-tb), só até ela. Em um dia comum, o resultado é a temperatura média menos a temperatura-base; em um dia muito quente, o dia acumula um pouco menos, porque o calor acima do limite não conta. A planta muda de fase quando atinge certos valores de GDA, e não em datas fixas.
 
 ### Índice do ciclo
 
-Número de 0 a 100% que resume o efeito da falta de água na safra inteira. Cada janela do ciclo gera um fator: 1 quando não faltou água, menor quando faltou, descontado conforme a sensibilidade da janela (o Ky). O índice é o produto dos quatro fatores. Com índice de 81,8%, a estimativa é que a safra renda 81,8% da produtividade potencial. Uma janela que ainda não chegou entra como se não fosse faltar água. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
+Número de 0 a 100% que resume o efeito da falta de água na safra inteira. Cada janela do ciclo gera um fator: 1 quando não faltou água, menor quando faltou, descontado conforme a sensibilidade da janela (o Ky). O índice é o produto dos quatro fatores. Com índice de 83,0%, a estimativa é que a safra renda 83,0% da produtividade potencial. Uma janela que ainda não chegou entra como se não fosse faltar água. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
 
 ### Janelas F1 a F4
 
@@ -145,7 +148,7 @@ A produtividade que a lavoura alcançaria se não faltasse água em nenhum momen
 
 ### Produtividade predita
 
-A produtividade estimada da safra, em sacas por hectare, considerando só o efeito da falta de água. É a produtividade potencial multiplicada pelo [índice do ciclo](#índice-do-ciclo). Com Ym de 65 sc/ha e índice de 81,8%, a produtividade predita é de 53,1 sc/ha. É uma estimativa de apoio, e não uma previsão de colheita: não considera pragas, doenças, fertilidade nem manejo. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
+A produtividade estimada da safra, em sacas por hectare, considerando só o efeito da falta de água. É a produtividade potencial multiplicada pelo [índice do ciclo](#índice-do-ciclo). Com Ym de 65 sc/ha e índice de 83,0%, a produtividade predita é de 54,0 sc/ha. É uma estimativa de apoio, e não uma previsão de colheita: não considera pragas, doenças, fertilidade nem manejo. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
 
 ### Redução potencial de produtividade
 
@@ -154,6 +157,10 @@ Estimativa de quanto da produtividade pode ter sido perdida por falta de água e
 ### TAW e RAW
 
 **TAW** é a água total disponível: tudo o que o solo guarda para a planta na profundidade das raízes, em milímetros. **RAW** é a água facilmente disponível: a parte do TAW que a planta usa sem sofrer. Enquanto a depleção fica abaixo do RAW, não há estresse. Quando passa do RAW, o Ks começa a cair.
+
+### Temperatura-base superior (TB)
+
+Parâmetro da cultivar, em °C, que marca a temperatura acima da qual o calor a mais já não acelera a planta. É o par da **temperatura-base** (abaixo dela a planta não se desenvolve; 10 °C na soja). Entre as duas está o calor útil que o sistema soma nos [graus-dia](#gda-graus-dia-acumulados), pelo método de Ometto. Para a soja, a referência usa 30 °C, valor provisório. Com ela, um dia de 34 °C de máxima conta um pouco menos que um dia de 30 °C de máxima, e as janelas de uma safra quente ficam alguns dias mais longas do que ficariam sem o limite. O campo é opcional: vazio significa sem limite superior.
 
 ---
 

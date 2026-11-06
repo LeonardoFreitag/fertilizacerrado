@@ -20,7 +20,7 @@ function referenceMissing(): AppError {
   return new AppError(404, 'REFERENCE_CULTIVAR_MISSING', 'Cultivar de referência de soja não encontrada; execute o seed.');
 }
 
-/** Os 15 parâmetros científicos de um registro/snapshot, como objeto plano. */
+/** Os 16 parâmetros científicos de um registro/snapshot (tUpper pode ser null), como objeto plano. */
 export function scientificParams(source: Record<string, unknown>): CultivarParams {
   return pickCultivarParams(source) as CultivarParams;
 }
@@ -39,7 +39,7 @@ export function fieldsToSync(
   return CULTIVAR_PARAM_KEYS.filter((key) => {
     if (current[key] === reference[key]) return false;
     if (mode === 'all') return true;
-    return snapshot !== null && snapshot[key] !== undefined && current[key] === snapshot[key];
+    return snapshot !== null && snapshot[key] !== undefined && current[key] === snapshot[key]; // null === null conta como igual
   });
 }
 
@@ -147,7 +147,7 @@ export const cultivarService = {
 
     const updatedFields = fieldsToSync(scientificParams(current as unknown as Record<string, unknown>), snapshot, reference, mode);
     const changes: Partial<CultivarParams> = {};
-    for (const key of updatedFields) changes[key] = reference[key];
+    for (const key of updatedFields) (changes as Record<string, number | null>)[key] = reference[key];
 
     // Mesmo sem campo a mudar, o snapshot passa a refletir a referência atual.
     cultivarParamsSchema.parse({ ...pickCultivarParams(current), ...changes });

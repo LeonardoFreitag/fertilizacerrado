@@ -68,6 +68,14 @@ describe('resolveInterval', () => {
     expect(r.to < '2026-02-01').toBe(true); // não vai até o limite
   });
 
+  it('limite superior (Ometto) atinge gdaTotal em data igual ou posterior à do residual sem TB', () => {
+    const hot = SERIES.map((d) => ({ ...d, tmax: d.tmax + 4 })); // mais dias com Tmax > 30
+    const withTb = resolveInterval('2025-11-01', '2026-03-30', hot, SOJA);
+    const noTb = resolveInterval('2025-11-01', '2026-03-30', hot, { ...SOJA, tUpper: null });
+    expect(withTb.to >= noTb.to).toBe(true);
+    expect(withTb.to > noTb.to).toBe(true);
+  });
+
   it('série vazia ⇒ todas as datas faltam até o limite', () => {
     const r = resolveInterval('2025-11-01', '2025-11-03', [], cultivar);
     expect(r.missingDates).toEqual(['2025-11-01', '2025-11-02', '2025-11-03']);
@@ -80,10 +88,11 @@ describe('resolveInterval', () => {
 });
 
 describe('snapshots', () => {
-  it('cultivar: 15 parâmetros + identificação, iguais ao registro', () => {
+  it('cultivar: 16 parâmetros (com tUpper) + identificação, iguais ao registro', () => {
     const snap = snapshotCultivar(SOJA as never);
-    expect(snap).toMatchObject({ id: 'c1', name: SOJA.name, crop: 'SOJA', gdaTotal: 1200, kcMid: 1.15, kyF3: 1 });
-    expect(Object.keys(snap)).toHaveLength(18);
+    expect(snap).toMatchObject({ id: 'c1', name: SOJA.name, crop: 'SOJA', gdaTotal: 1200, kcMid: 1.15, kyF3: 1, tUpper: 30 });
+    expect(Object.keys(snap)).toHaveLength(19);
+    expect(snapshotCultivar({ ...SOJA, tUpper: null } as never).tUpper).toBeNull();
   });
 
   it('solo do talhão, sem defaults', () => {
@@ -136,7 +145,7 @@ describe('msaService.processHarvest', () => {
     era5.getDailySeriesForField.mockResolvedValue(SERIES);
     const r = await msaService.processHarvest(USER, 'h1');
     expect(r.run.status).toBe('SUCCEEDED');
-    expect(r.run.engineVersion).toBe('2.0.0');
+    expect(r.run.engineVersion).toBe('2.1.0');
     expect(r.run.cultivarSnapshot).toMatchObject({ id: 'c1', gdaTotal: 1200 });
     expect(r.run.soilSnapshot).toEqual({ thetaFC: 0.3, thetaWP: 0.14, altitudeM: 741, soilDefaults: false });
     expect(r.phases).toHaveLength(4);
@@ -236,8 +245,15 @@ describe('cultivarChangedSinceRun', () => {
   });
 
   it('parâmetro presente só na cultivar atual (snapshot anterior a tUpper) ⇒ true', () => {
-    expect(cultivarChangedSinceRun(snapshot, { ...SOJA, tUpper: 30 })).toBe(true);
-    expect(cultivarChangedSinceRun(snapshot, { ...SOJA, tUpper: null })).toBe(false); // ausente = null dos dois lados
+    const { tUpper: _t, ...legacy } = snapshot;
+    expect(cultivarChangedSinceRun(legacy, { ...SOJA, tUpper: 30 })).toBe(true);
+    expect(cultivarChangedSinceRun(legacy, { ...SOJA, tUpper: null })).toBe(false); // ausente = null dos dois lados
+  });
+
+  it('run do motor 2.0.0 (snapshot sem tUpper) com cultivar atual tUpper 30 ⇒ true', () => {
+    const { tUpper: _t, ...legacy } = snapshot;
+    expect(cultivarChangedSinceRun(legacy, SOJA)).toBe(true);
+    expect(cultivarChangedSinceRun(legacy, { ...SOJA, tUpper: null })).toBe(false);
   });
 
   it('snapshot inválido ⇒ false', () => {

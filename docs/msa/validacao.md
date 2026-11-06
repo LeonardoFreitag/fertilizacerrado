@@ -128,6 +128,33 @@ $$PBIAS = \frac{\sum_{i=1}^{n}(O_i - S_i)}{\sum_{i=1}^{n} O_i} \times 100\%$$
 
 ---
 
+### Caso 5 — Comparação de métodos de graus-dia (residual × Ometto × Ometto com TB)
+
+**Contexto:** desde `ENGINE_VERSION` 2.1.0 (change `adopt-ometto-degree-days`, 2026-11-03) o motor calcula os graus-dia pelo método de Ometto (1981), com temperatura-base inferior $T_b$ e superior $T_B$ (`docs/msa/algoritmos.md` §1). O método residual $\max((T_{max} + T_{min})/2 - T_b,\ 0)$ do motor ≤ 2.0.0 é o caso 1 de Ometto; os dois diferem nos dias que cruzam uma das bases — no Cerrado, sobretudo os dias com $T_{max} > T_B$ de setembro a novembro. Como as janelas F1–F4 definem o $\overline{Ks}$ por janela, o Ky aplicado, o índice do ciclo e a produtividade predita, este caso documenta **quanto** a troca de método desloca o calendário fenológico. O valor de $T_B$ da soja (30 °C) é provisório (`questoes-abertas.md`, questão nº 10); a comparação também serve para discutir essa escolha.
+
+**Ferramenta:** `pnpm msa:validate-gda` (`backend/scripts/validation/gda-validate.ts`). Para a mesma série de $T_{max}$/$T_{min}$, acumula graus-dia por três métodos — `residual` (fórmula antiga, reimplementada no script para não depender do motor), `ometto` (motor, sem $T_B$) e `ometto-tb` (motor, com $T_B$ = `--tupper`, padrão 30 °C) — e projeta as janelas da cultivar de referência (`phaseFromGDA`).
+
+**Procedimento:**
+1. Série sintética de 150 dias (`syntheticSeason(150, 2026)`, a mesma dos testes de serviço; não precisa de banco):
+   ```bash
+   cd backend && pnpm msa:validate-gda -- --synthetic 150 --cultivar soja --out ../validacao/saida/gda-sintetica.csv
+   ```
+2. Célula de Goiânia em cache (`era5_daily_data`, pela conexão do backend — `DATABASE_URL`), a partir de uma data de emergência real da safra escolhida no Caso 2:
+   ```bash
+   cd backend && pnpm msa:validate-gda -- --cell -16.7,-49.3 --from 2025-10-25 --tbase 10 --tupper 30 --out ../validacao/saida/gda-goiania.csv
+   ```
+   Um CSV próprio com colunas `date, tmax, tmin` (demais colunas ignoradas; formato de `examples/synthetic-cerrado-season.csv`) também é aceito como entrada. `--to` limita o fim da série; sem ele, vai até o último dia em cache.
+3. Opcionalmente, repetir o passo 2 com `--tupper 32` e `--tupper 35` para a sensibilidade ao valor de $T_B$ (questão nº 10).
+4. Levar os CSVs (`metodo;janela;inicio;fim;dias;gda_fim`) para a tabela da dissertação.
+
+**Saída:** por método e janela F1–F4, a data de início, a data de fim e o número de dias; o dia em que `gdaTotal` é atingido (ou "não atingido", se a série termina antes) e o GDA acumulado ao fim da série; e a diferença de dias por janela entre `ometto-tb` e `residual`. O script encerra com código 1 se faltar a coluna `tmin`/`tmax` ou se `--tupper ≤ --tbase`.
+
+**Leitura esperada:** `residual` e `ometto` coincidem enquanto $T_{min} \ge T_b$ (na soja do Cerrado, quase sempre); `ometto-tb` acumula menos nos dias com $T_{max} > T_B$, então **nenhuma janela de `ometto-tb` começa antes da correspondente em `residual`** e as transições F2–F4 tendem a ficar alguns dias mais tarde nos meses quentes, com o fim do ciclo igual ou posterior. Em safras de emergência em dezembro–janeiro, com menos dias acima de 30 °C, a diferença é menor.
+
+**Critério de aceitação:** **não há** — o caso é descritivo. Registrar, por série, os três calendários e as diferenças de dias por janela; na dissertação, uma tabela (série × método × janela: início, fim, dias; fim do ciclo; GDA ao fim) e a discussão do efeito sobre o $\overline{Ks}$ por janela e a produtividade predita do Caso 2.
+
+---
+
 ## Estações de Referência para o Cerrado
 
 | Estação INMET | Código | UF | Lat | Lon |
@@ -151,8 +178,11 @@ docs/msa/validation_results/
 ├── et0_scatter_plot.png
 ├── water_balance_timeseries.png
 ├── yield_predicted_vs_observed.csv
+├── gda_methods.csv
 └── qm_bias_correction.png
 ```
+
+`gda_methods.csv` é a junção dos CSVs do Caso 5 (`metodo;janela;inicio;fim;dias;gda_fim`, uma série por bloco: sintética e célula de Goiânia).
 
 ---
 
@@ -163,4 +193,5 @@ docs/msa/validation_results/
 | Validação ET₀ (Caso 1) | Após implementação de `et0.calculator.ts` | Heb + dev |
 | Validação balanço hídrico e produtividade predita × observada (Caso 2) | Motor pronto (`engine/water-balance.ts`, `engine/yield.ts`); exige safras históricas com produtividade observada | Heb + dev |
 | Validação QM (Caso 4) | Após implementação de `era5_bias_correct.py` | Heb + dev |
+| Comparação de métodos de graus-dia (Caso 5) | Motor 2.1.0 (`engine/gda.ts`, Ometto); série sintética imediata, célula de Goiânia após o backfill | Heb + dev |
 | Relatório final de validação | Antes da defesa da dissertação | Heb |

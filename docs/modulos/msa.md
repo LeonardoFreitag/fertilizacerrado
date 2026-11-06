@@ -16,7 +16,8 @@ Armazena os parâmetros agronômicos e fisiológicos de cada cultivar cadastrada
 | Parâmetro | Soja (referência) |
 |---|---|
 | GDA total (°C·dia) | 1.200 |
-| T_base (°C) | 10 |
+| T_base (°C) — base inferior | 10 |
+| T_B (°C) — base superior (Ometto), `tUpper` | 30 (provisório — `questoes-abertas.md` nº 10; opcional: nulo = sem base superior) |
 | Kc_ini | 0,20 (plantio direto) |
 | Kc_mid | 1,15 |
 | Kc_end | 0,50 |
@@ -28,21 +29,23 @@ Armazena os parâmetros agronômicos e fisiológicos de cada cultivar cadastrada
 | Ky F4 | 0,40 |
 | Limiares GDA F1/F2/F3 (°C·dia) | 120 / 450 / 900 |
 
-> **Fonte:** Allen et al. (1998) FAO Irrigation and Drainage Paper No. 56 (Kc, p, Zr); Doorenbos & Kassam (1979) FAO No. 33 (Ky).
+> **Fonte:** Allen et al. (1998) FAO Irrigation and Drainage Paper No. 56 (Kc, p, Zr); Doorenbos & Kassam (1979) FAO No. 33 (Ky); Ometto (1981) para as temperaturas-base do método de graus-dia (`algoritmos.md` §1).
+
+São **16 parâmetros científicos** (`CULTIVAR_PARAM_KEYS` em `cultivar-params.schema.ts`): `tBase`, `tUpper`, `gdaTotal`, `gdaF1End`, `gdaF2End`, `gdaF3End`, `kcIni`, `kcMid`, `kcEnd`, `p`, `zrIni`, `zrMax`, `kyF1`–`kyF4`. `tUpper` é o único anulável (`NULLABLE_PARAM_KEYS`), introduzido pela change `adopt-ometto-degree-days` (2026-11-03). A migration `adopt_ometto_degree_days` acrescentou a coluna `t_upper`, gravou 30 em todas as cultivares de soja (referência e próprias) e acrescentou `tUpper: 30` ao `reference_snapshot` das próprias — assim o campo nasce "não alterado" e segue a referência no modo `unchanged` do `sync-reference` quando o valor definitivo de T_B for fixado (questão nº 10).
 
 **Só soja.** O enum `Crop` tem apenas `SOJA`; a coluna `crop` e o `@@unique([name, crop, createdById])` permanecem (para uma eventual segunda cultura no futuro), mas `crop` **não é aceito** no `POST` (400 identificando o campo) e o filtro `?crop=` da listagem foi removido; a resposta continua trazendo `crop: "SOJA"`.
 
 A cultivar de referência é criada pelo seed (`prisma/seed.ts`, idempotente por nome + cultura; `reference-cultivars.ts` é a fonte da verdade) com `isDefault = true` e `referenceSnapshot = null`, e é **imutável pela API**, inclusive para `ADMIN` (403 `DEFAULT_CULTIVAR_READONLY`): corrigir um valor é alterar o seed e executá-lo novamente. Fonte bibliográfica em JSDoc no próprio seed. `GET /api/v1/cultivars/reference` (declarada antes de `/:id`) devolve essa cultivar do banco; 404 `REFERENCE_CULTIVAR_MISSING` se o seed não rodou.
 
-**Nova cultivar nasce da referência.** Ninguém digita os 15 parâmetros do zero: o formulário "Nova cultivar" abre pré-preenchido com a referência (`docs/modulos/frontend.md`) e, no `POST`, o serviço grava em `cultivars.reference_snapshot` os 15 parâmetros da referência **naquele momento**. É esse snapshot que permite saber o que o técnico alterou (campo "não alterado" = valor atual igual ao do `referenceSnapshot`); comparar com a referência atual não serviria, porque, quando a referência muda, campos nunca tocados pareceriam alterados.
+**Nova cultivar nasce da referência.** Ninguém digita os 16 parâmetros do zero: o formulário "Nova cultivar" abre pré-preenchido com a referência (`docs/modulos/frontend.md`) e, no `POST`, o serviço grava em `cultivars.reference_snapshot` os 16 parâmetros da referência **naquele momento**. É esse snapshot que permite saber o que o técnico alterou (campo "não alterado" = valor atual igual ao do `referenceSnapshot`); comparar com a referência atual não serviria, porque, quando a referência muda, campos nunca tocados pareceriam alterados.
 
-**Atualizar a partir da referência.** `POST /api/v1/cultivars/:id/sync-reference` com `{ mode: "unchanged" | "all" }` (mesmas permissões do `PATCH`; 403 na referência): `unchanged` substitui só os campos iguais ao `referenceSnapshot`; `all` substitui os 15. Nos dois modos grava o novo `referenceSnapshot`, valida o estado resultante e responde 200 `{ cultivar, updatedFields: string[] }`. Serve para quando a referência tabelada mudar (ex.: T_base confirmada na change de graus-dia de Ometto).
+**Atualizar a partir da referência.** `POST /api/v1/cultivars/:id/sync-reference` com `{ mode: "unchanged" | "all" }` (mesmas permissões do `PATCH`; 403 na referência): `unchanged` substitui só os campos iguais ao `referenceSnapshot`; `all` substitui os 16. Nos dois modos grava o novo `referenceSnapshot`, valida o estado resultante e responde 200 `{ cultivar, updatedFields: string[] }`. Serve para quando a referência tabelada mudar (ex.: o valor definitivo de T_B, `tUpper`, hoje 30 °C provisórios — questão nº 10). Campos anuláveis comparam `null` como valor (`null === null` conta como "não alterado").
 
 **Regras das cultivares (`/api/v1/cultivars`):**
 
 - `AGRONOMO` e `ADMIN` criam cultivares próprias (`createdById` = criador); `PRODUTOR` é somente leitura.
 - Visibilidade: a cultivar de referência + as próprias; `ADMIN` vê todas. Fora disso, 404.
-- Validação Zod com faixas plausíveis: `tBase` 0–20 °C; `gdaTotal` 300–4000; limiares `gdaF1End < gdaF2End < gdaF3End < gdaTotal`; `0 < Kc ≤ 1,5`; `0 < p < 1`; `0 < zrIni ≤ zrMax ≤ 3 m`; `0 ≤ Ky ≤ 1,5`. No `PATCH`, as relações cruzadas são validadas sobre o estado resultante.
+- Validação Zod com faixas plausíveis: `tBase` 0–20 °C; `tUpper` 15–50 °C, opcional (`null` = sem base superior) e, quando informado, `> tBase` (erro apontado em `tUpper`; vale também para um `PATCH` em `tBase` que alcance o `tUpper` vigente); `gdaTotal` 300–4000; limiares `gdaF1End < gdaF2End < gdaF3End < gdaTotal`; `0 < Kc ≤ 1,5`; `0 < p < 1`; `0 < zrIni ≤ zrMax ≤ 3 m`; `0 ≤ Ky ≤ 1,5`. No `PATCH`, as relações cruzadas são validadas sobre o estado resultante.
 - Nome único por criador e cultura (dois agrônomos podem ter "Minha soja").
 - **Edição de cultivar em uso é permitida** (questão aberta nº 5, decidida em 2026-11-02): `PATCH` nos parâmetros científicos de uma cultivar com safras responde 200. A reprodutibilidade é garantida pelo `cultivarSnapshot` gravado em cada run — runs já calculadas guardam os parâmetros da época; as próximas usam os novos valores. `GET /harvests/:id/msa` devolve `cultivarChangedSinceRun: true` quando algum parâmetro científico atual difere do snapshot da última run, e o painel avisa. `DELETE` de cultivar em uso continua respondendo 409 `CULTIVAR_IN_USE`.
 - `crop` não pode ser informado nem alterado (só soja).
@@ -86,11 +89,11 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
 
 **Pré-requisitos no talhão:** `altitudeM` obrigatório (422 `MISSING_FIELD_ALTITUDE`, sem run); `thetaFC`/`thetaWP` opcionais (default 0,28/0,12, registrado no snapshot com `soilDefaults: true`).
 
-**Intervalo processado:** da data de emergência até o menor entre `hoje − 6` (UTC, o lag do ERA5-Land) e o dia em que o GDA acumulado, percorrido sobre dias contíguos desde a emergência, atinge `gdaTotal`. Lacunas depois do fim do ciclo não bloqueiam; lacuna dentro do intervalo gera uma run `NEEDS_DATA` com `missingDates`, **sem calcular e sem interpolar**.
+**Intervalo processado:** da data de emergência até o menor entre `hoje − 6` (UTC, o lag do ERA5-Land) e o dia em que o GDA acumulado, percorrido sobre dias contíguos desde a emergência, atinge `gdaTotal` (`resolveInterval` usa `dailyGDA` com `tBase` e `tUpper` do snapshot — graus-dia pelo **método de Ometto (1981)**, cinco casos, `algoritmos.md` §1; com T_B o ciclo termina no mesmo dia ou depois do que terminaria pelo residual). Lacunas depois do fim do ciclo não bloqueiam; lacuna dentro do intervalo gera uma run `NEEDS_DATA` com `missingDates`, **sem calcular e sem interpolar**.
 
-**Persistência (reprodutibilidade):** cada execução gera uma run em `msa_runs` com status (`SUCCEEDED` / `FAILED` / `NEEDS_DATA`), intervalo, `cultivarSnapshot` (os 15 parâmetros + id/nome/cultura como estavam), `soilSnapshot` (θFC, θWP, altitude, `soilDefaults`), `engineVersion` (`ENGINE_VERSION` do motor, semver — `2.0.0`) e os campos de produtividade: `expectedYield` (Ym da safra no momento), `yieldIndex` (índice do ciclo), `phasesReached` (0–4) e `predictedYield` (nulo sem Ym; todos nulos em `NEEDS_DATA`/`FAILED`). O motor recebe o snapshot, não o registro atual da cultivar. A série diária vai para `msa_daily_results` (uma linha por dia, colunas de `DailyBalanceRow`) e os resumos por janela (sem percentis) para `msa_phase_summaries`. Reprocessar cria uma run nova; o histórico é mantido; `harvests.latestRunId` aponta para a última run `SUCCEEDED`. Mesmos dados + mesmos snapshots ⇒ resultados idênticos (verificado no roteiro `e2e-msa.sh`).
+**Persistência (reprodutibilidade):** cada execução gera uma run em `msa_runs` com status (`SUCCEEDED` / `FAILED` / `NEEDS_DATA`), intervalo, `cultivarSnapshot` (os 16 parâmetros, `tUpper` possivelmente nulo, + id/nome/cultura como estavam), `soilSnapshot` (θFC, θWP, altitude, `soilDefaults`), `engineVersion` (`ENGINE_VERSION` do motor, semver — `2.1.0` desde a adoção de Ometto; runs `2.0.0` ficam no histórico) e os campos de produtividade: `expectedYield` (Ym da safra no momento), `yieldIndex` (índice do ciclo), `phasesReached` (0–4) e `predictedYield` (nulo sem Ym; todos nulos em `NEEDS_DATA`/`FAILED`). O motor recebe o snapshot, não o registro atual da cultivar. A série diária vai para `msa_daily_results` (uma linha por dia, colunas de `DailyBalanceRow`) e os resumos por janela (sem percentis) para `msa_phase_summaries`. Reprocessar cria uma run nova; o histórico é mantido; `harvests.latestRunId` aponta para a última run `SUCCEEDED`. Mesmos dados + mesmos snapshots ⇒ resultados idênticos (verificado no roteiro `e2e-msa.sh`).
 
-**Predição de produtividade (`algoritmos.md` §6):** `cycleYieldIndex(summaries)` devolve `{ yieldIndex, phasesReached, factors }`, com `yieldIndex = Π_j [1 − Ky_j·(1 − Ks̄_j)]` sobre as janelas com dias e fator 1 nas não alcançadas ("considera o restante do ciclo sem estresse"); `predictedYield = expectedYield × yieldIndex`. `GET /msa` devolve ainda `cultivarChangedSinceRun` (função pura que compara as chaves de `CultivarParams` presentes no `cultivarSnapshot` com a cultivar atual da safra) para o aviso do painel. A predição é um valor único, sem faixa de incerteza.
+**Predição de produtividade (`algoritmos.md` §6):** `cycleYieldIndex(summaries)` devolve `{ yieldIndex, phasesReached, factors }`, com `yieldIndex = Π_j [1 − Ky_j·(1 − Ks̄_j)]` sobre as janelas com dias e fator 1 nas não alcançadas ("considera o restante do ciclo sem estresse"); `predictedYield = expectedYield × yieldIndex`. `GET /msa` devolve ainda `cultivarChangedSinceRun` (função pura que compara a **união** das chaves de `CultivarParams` do `cultivarSnapshot` e da cultivar atual; chave ausente de um lado conta como `null`) para o aviso do painel. Por isso uma run do motor 2.0.0 — cujo snapshot não tem `tUpper` — acusa divergência e o painel sugere reprocessar; é o comportamento desejado após o deploy de 2.1.0 ("Processar todas as safras ativas" em `/admin`). A predição é um valor único, sem faixa de incerteza.
 
 ---
 
@@ -103,7 +106,7 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
 3. Pai enfileira `msa-process {harvestId, reason: WEEKLY}` por safra ACTIVE (jobId weekly_<data>_<id>)
 4. Worker Node (concorrência 4), para cada job:
    a. Busca a série diária da célula do talhão (Tmax, Tmin, Tdew, u2, Rn, P)
-   b. GDA acumulado → janela fenológica (F1/F2/F3/F4) e fim do ciclo
+   b. GDA do dia (Ometto: Tb/TB) e acumulado → janela fenológica (F1/F2/F3/F4) e fim do ciclo
    c. ET₀ diária (FAO-56) → ETc = Kc(GDA) × ET₀
    d. Balanço hídrico diário → Dr, Ks, ETc_adj; resumo por janela (Ks médio, Ky·(1−Ks̄))
    e. Índice do ciclo = Π das janelas alcançadas → produtividade predita = Ym × índice (sc/ha)
@@ -179,7 +182,7 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | Método | Path | Descrição | Roles |
 |---|---|---|---|
 | GET | `/api/v1/cultivars/reference` | Cultivar de referência de soja (seed); 404 `REFERENCE_CULTIVAR_MISSING` | Todos |
-| POST | `/api/v1/cultivars` | Cria cultivar própria (sem `crop`; `referenceSnapshot` gravado da referência) | AGRONOMO, ADMIN |
+| POST | `/api/v1/cultivars` | Cria cultivar própria (sem `crop`; `tUpper` opcional, `null` = sem base superior; `referenceSnapshot` gravado da referência) | AGRONOMO, ADMIN |
 | POST | `/api/v1/cultivars/:id/sync-reference` | `{ mode: "unchanged" \| "all" }` → 200 `{ cultivar, updatedFields }`; 403 na referência | AGRONOMO, ADMIN |
 | POST | `/api/v1/harvests` | Cadastra nova safra (`expectedYield` opcional, sc/ha, ≤ 250) | AGRONOMO, ADMIN |
 | PATCH | `/api/v1/harvests/:id` | `status`, `notes`, `season`, `expectedYield` (não recalcula runs) | AGRONOMO, ADMIN |
@@ -202,14 +205,15 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | `src/modules/msa/msa.repository.ts` | Runs, série diária, resumos (Prisma) |
 | `src/modules/msa/msa.routes.ts` · `msa.controller.ts` · `dtos/` | Rotas sob `/harvests/:id/msa` |
 | `src/modules/msa/era5.repository.ts` | Série diária do talhão no formato do motor; cobertura |
-| `src/modules/msa/engine/` | Motor puro: GDA, fenologia, ET₀, Kc, balanço, FAO-33 (`yield.ts`: redução por janela, índice do ciclo, produtividade predita) — `ENGINE_VERSION` 2.0.0 |
+| `src/modules/msa/engine/` | Motor puro: GDA (Ometto, `gda.ts`), fenologia, ET₀, Kc, balanço, FAO-33 (`yield.ts`: redução por janela, índice do ciclo, produtividade predita) — `ENGINE_VERSION` 2.1.0 |
 | `src/modules/jobs/flows.ts` · `jobs.service.ts` | Filas, payloads, flows (semanal, backfill), `planHarvestJobs`, ids determinísticos; enfileiramento e consulta |
 | `src/modules/jobs/jobs.routes.ts` · `jobs.controller.ts` | `/api/v1/admin/jobs` (ADMIN) |
 | `src/worker.ts` | Processo `worker`: consumidores `msa-process` (×4) e `msa-weekly`, scheduler semanal, shutdown gracioso |
 | `src/config/queue.ts` | Nomes das filas e conexão BullMQ (separada do Redis do limite de login) |
 | `backend/etl/` | ETL Python — worker da fila `era5-ingest` + CLI (`ingest`, `backfill`, `status`, `worker`) |
 | `backend/scripts/e2e/e2e-msa.sh` · `e2e-orchestration.sh` | Roteiros de ponta a ponta do processamento (inline) e da orquestração (filas) |
-| `src/modules/cultivars/` | Cultivares: referência (`GET /reference`), `referenceSnapshot`, `sync-reference`, edição em uso |
+| `src/modules/cultivars/` | Cultivares: 16 parâmetros (`tUpper` anulável), referência (`GET /reference`), `referenceSnapshot`, `sync-reference`, edição em uso |
+| `scripts/validation/gda-validate.ts` | `pnpm msa:validate-gda` — Caso 5 de `validacao.md`: residual × Ometto × Ometto com TB |
 | `docs/msa/algoritmos.md` | Fórmulas matemáticas completas |
 | `docs/msa/era5-etl.md` | Pipeline de ingestão e correção |
 | `docs/msa/validacao.md` | Protocolo de validação científica |

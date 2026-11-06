@@ -189,7 +189,7 @@ export function cultivarChangedSinceRun(snapshot: unknown, current: Record<strin
   return false;
 }
 
-/** Snapshot = os 15 parâmetros + identificação; o motor recebe o snapshot, não o registro. */
+/** Snapshot = os 16 parâmetros (tUpper pode ser null) + identificação; o motor recebe o snapshot, não o registro. */
 export function snapshotCultivar(cultivar: HarvestForProcessing['cultivar']): CultivarSnapshot {
   const params = Object.fromEntries(CULTIVAR_PARAM_KEYS.map((k) => [k, cultivar[k]])) as unknown as CultivarParams;
   return { ...params, id: cultivar.id, name: cultivar.name, crop: cultivar.crop };
@@ -235,7 +235,7 @@ export function resolveInterval(
   let gdaAccum = 0;
   for (const day of series) {
     if (day.date < from || day.date > limit) continue;
-    gdaAccum += dailyGDA(day.tmax, day.tmin, cultivar.tBase);
+    gdaAccum += dailyGDA(day.tmax, day.tmin, cultivar.tBase, cultivar.tUpper ?? null);
     if (gdaAccum >= cultivar.gdaTotal) {
       to = day.date;
       break;

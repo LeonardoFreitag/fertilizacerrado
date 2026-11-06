@@ -68,7 +68,7 @@ echo "== Cultivares: referência e visibilidade =="
 check "uma cultivar de referência no banco (só soja)" 1 "$(sql 'SELECT count(*) FROM cultivars WHERE is_default')"
 check "enum crop só com SOJA" SOJA "$(sql "SELECT string_agg(enumlabel, ',') FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'crop'")"
 SOJA_REF=$(sql "SELECT id FROM cultivars WHERE is_default AND crop='SOJA'")
-check "referência soja: valores do seed" "10|1200|120|450|900|0.2|1.15|0.5|0.5|0.3|0.95|0.2|0.8|1|0.4" "$(sql "SELECT t_base,gda_total,gda_f1_end,gda_f2_end,gda_f3_end,kc_ini,kc_mid,kc_end,depletion_fraction,zr_ini,zr_max,ky_f1,ky_f2,ky_f3,ky_f4 FROM cultivars WHERE id='$SOJA_REF'")"
+check "referência soja: valores do seed (com tUpper 30)" "10|30|1200|120|450|900|0.2|1.15|0.5|0.5|0.3|0.95|0.2|0.8|1|0.4" "$(sql "SELECT t_base,t_upper,gda_total,gda_f1_end,gda_f2_end,gda_f3_end,kc_ini,kc_mid,kc_end,depletion_fraction,zr_ini,zr_max,ky_f1,ky_f2,ky_f3,ky_f4 FROM cultivars WHERE id='$SOJA_REF'")"
 check "referência sem referenceSnapshot" "" "$(sql "SELECT reference_snapshot FROM cultivars WHERE id='$SOJA_REF'")"
 call GET /cultivars "";        check "sem token → 401" 401 "$STATUS"
 call GET /cultivars "$PEDRO";  check "produtor lista → 200" 200 "$STATUS"; check "produtor vê a referência" 1 "$(echo "$BODY" | j length)"
@@ -78,12 +78,12 @@ call GET "/cultivars/reference" ""; check "reference sem token → 401" 401 "$ST
 call GET "/cultivars/$SOJA_REF" "$PEDRO"; check "detalhe de referência → 200" 200 "$STATUS"; check "isDefault true" true "$(echo "$BODY" | j isDefault)"
 
 echo "== Cultivares: cadastro =="
-PARAMS='"tBase":10,"gdaTotal":1300,"gdaF1End":130,"gdaF2End":480,"gdaF3End":950,"kcIni":0.25,"kcMid":1.1,"kcEnd":0.5,"depletionFraction":0.5,"zrIni":0.3,"zrMax":0.9,"kyF1":0.2,"kyF2":0.8,"kyF3":1.0,"kyF4":0.4'
+PARAMS='"tBase":10,"tUpper":30,"gdaTotal":1300,"gdaF1End":130,"gdaF2End":480,"gdaF3End":950,"kcIni":0.25,"kcMid":1.1,"kcEnd":0.5,"depletionFraction":0.5,"zrIni":0.3,"zrMax":0.9,"kyF1":0.2,"kyF2":0.8,"kyF3":1.0,"kyF4":0.4'
 call POST /cultivars "$PEDRO" "{\"name\":\"Soja do Pedro\",$PARAMS}"; check "produtor cadastra → 403" 403 "$STATUS"
 call POST /cultivars "$ANA" "{\"name\":\"Soja da Ana\",$PARAMS}";     check "agrônoma cadastra → 201" 201 "$STATUS"
 C_ANA=$(echo "$BODY" | j id); check "isDefault false" false "$(echo "$BODY" | j isDefault)"; check "createdById = Ana" "$ANA_ID" "$(echo "$BODY" | j createdById)"
 check "crop SOJA gravado pelo servidor" SOJA "$(echo "$BODY" | j crop)"
-check "referenceSnapshot = parâmetros da referência" "10|1200|1.15" "$(echo "$BODY" | j referenceSnapshot.tBase)|$(echo "$BODY" | j referenceSnapshot.gdaTotal)|$(echo "$BODY" | j referenceSnapshot.kcMid)"
+check "referenceSnapshot = parâmetros da referência (16, com tUpper)" "10|30|1200|1.15" "$(echo "$BODY" | j referenceSnapshot.tBase)|$(echo "$BODY" | j referenceSnapshot.tUpper)|$(echo "$BODY" | j referenceSnapshot.gdaTotal)|$(echo "$BODY" | j referenceSnapshot.kcMid)"
 call POST /cultivars "$ANA" "{\"name\":\"Soja da Ana\",$PARAMS}";     check "mesmo nome, mesma criadora → 409" 409 "$STATUS"; contains "código CULTIVAR_NAME_IN_USE" "$BODY" CULTIVAR_NAME_IN_USE
 call POST /cultivars "$BIA" "{\"name\":\"Soja da Ana\",$PARAMS}";     check "mesmo nome, outra criadora → 201" 201 "$STATUS"; C_BIA=$(echo "$BODY" | j id)
 call POST /cultivars "$ANA" "{\"name\":\"Ref falsa\",$PARAMS,\"isDefault\":true}"; check "isDefault no corpo → 400" 400 "$STATUS"; contains "aponta isDefault" "$BODY" '"isDefault"'
@@ -98,6 +98,12 @@ call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"zrMax\":0.9/\"zrMax\":0.
 call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"zrMax\":0.9/\"zrMax\":3.5}}"; check "zrMax 3.5 → 400" 400 "$STATUS"
 call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"kyF1\":0.2/\"kyF1\":-0.1}}"; check "ky negativo → 400" 400 "$STATUS"
 call POST /cultivars "$ANA" "{\"name\":\"Ky limite\",${PARAMS/\"kyF3\":1.0/\"kyF3\":1.5}}"; check "ky 1.5 aceito → 201" 201 "$STATUS"; C_KY=$(echo "$BODY" | j id)
+call POST /cultivars "$ANA" "{\"name\":\"Sem TB\",${PARAMS/\"tUpper\":30/\"tUpper\":null}}"; check "tUpper null aceito → 201" 201 "$STATUS"; check "tUpper nulo" null "$(echo "$BODY" | j tUpper)"; C_NOTB=$(echo "$BODY" | j id)
+call POST /cultivars "$ANA" "{\"name\":\"TB 25\",${PARAMS/\"tUpper\":30/\"tUpper\":25}}"; check "tUpper 25 aceito → 201" 201 "$STATUS"; check "tUpper 25" 25 "$(echo "$BODY" | j tUpper)"; C_TB25=$(echo "$BODY" | j id)
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"tUpper\":30/\"tUpper\":10}}"; check "tUpper = tBase → 400 em tUpper" 400 "$STATUS"; contains "aponta tUpper" "$BODY" '"tUpper"'
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"tUpper\":30/\"tUpper\":55}}"; check "tUpper 55 → 400" 400 "$STATUS"
+call POST /cultivars "$ANA" "{\"name\":\"X\",${PARAMS/\"tUpper\":30,/}}"; check "tUpper ausente → 400" 400 "$STATUS"; contains "aponta tUpper ausente" "$BODY" '"tUpper"'
+call DELETE "/cultivars/$C_NOTB" "$ANA" >/dev/null; call DELETE "/cultivars/$C_TB25" "$ANA" >/dev/null
 
 echo "== Cultivares: visibilidade das próprias =="
 call GET /cultivars "$ANA";   check "Ana vê 1 ref + 2 suas" 3 "$(echo "$BODY" | j length)"; lacks "Ana não vê a da Bia" "$BODY" "\"id\":\"$C_BIA\""
@@ -114,6 +120,11 @@ call PATCH "/cultivars/$C_ANA" "$PEDRO" '{"kcMid":1.0}';         check "produtor
 call PATCH "/cultivars/$C_ANA" "$ANA" '{}';                      check "corpo vazio → 400" 400 "$STATUS"
 call PATCH "/cultivars/$C_ANA" "$ANA" '{"crop":"MILHO"}';        check "trocar crop → 400" 400 "$STATUS"
 call PATCH "/cultivars/$C_ANA" "$ANA" '{"gdaF3End":400}';        check "PATCH que quebra relação → 400" 400 "$STATUS"; contains "aponta gdaF3End" "$BODY" '"gdaF3End"'
+call PATCH "/cultivars/$C_ANA" "$ANA" '{"tUpper":null}';         check "PATCH tUpper null → 200" 200 "$STATUS"; check "tUpper nulo" null "$(echo "$BODY" | j tUpper)"
+call PATCH "/cultivars/$C_ANA" "$ANA" '{"tUpper":18}';           check "PATCH tUpper 18 → 200" 200 "$STATUS"
+call PATCH "/cultivars/$C_ANA" "$ANA" '{"tBase":18}';            check "PATCH tBase que alcança tUpper → 400 em tUpper" 400 "$STATUS"; contains "aponta tUpper" "$BODY" '"tUpper"'
+check "tBase inalterado" 10 "$(sql "SELECT t_base FROM cultivars WHERE id='$C_ANA'")"
+call PATCH "/cultivars/$C_ANA" "$ANA" '{"tUpper":30}';           check "PATCH tUpper 30 → 200" 200 "$STATUS"
 check "gdaF3End inalterado" 950 "$(sql "SELECT gda_f3_end FROM cultivars WHERE id='$C_ANA'")"
 call PATCH "/cultivars/$SOJA_REF" "$ADMIN" '{"kcMid":1.0}';      check "admin edita referência → 403" 403 "$STATUS"; contains "código DEFAULT_CULTIVAR_READONLY" "$BODY" DEFAULT_CULTIVAR_READONLY
 call DELETE "/cultivars/$SOJA_REF" "$ADMIN";                     check "admin exclui referência → 403" 403 "$STATUS"
@@ -222,7 +233,11 @@ check "referenceSnapshot.tBase = 12" 12 "$(echo "$BODY" | j referenceSnapshot.tB
 call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{"mode":"unchanged"}';   check "nada a atualizar → updatedFields []" '[]' "$(echo "$BODY" | j updatedFields)"
 call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{"mode":"all"}';         check "all → 200" 200 "$STATUS"
 contains "all atualiza kcMid" "$(echo "$BODY" | j updatedFields)" kcMid
-check "15 parâmetros iguais à referência" "12|1200|1.15|0.95" "$(echo "$BODY" | j tBase)|$(echo "$BODY" | j gdaTotal)|$(echo "$BODY" | j kcMid)|$(echo "$BODY" | j zrMax)"
+check "16 parâmetros iguais à referência" "12|1200|1.15|0.95" "$(echo "$BODY" | j tBase)|$(echo "$BODY" | j gdaTotal)|$(echo "$BODY" | j kcMid)|$(echo "$BODY" | j zrMax)"
+sql "UPDATE cultivars SET t_upper = 32 WHERE id='$SOJA_REF'" >/dev/null
+call POST "/cultivars/$C_ANA/sync-reference" "$ANA" '{"mode":"unchanged"}';   check "tUpper acompanha a referência (unchanged) → 200" 200 "$STATUS"
+check "tUpper 32, updatedFields [tUpper]" '32|["tUpper"]' "$(echo "$BODY" | j tUpper)|$(echo "$BODY" | j updatedFields)"
+sql "UPDATE cultivars SET t_upper = 30 WHERE id='$SOJA_REF'" >/dev/null
 sql "UPDATE cultivars SET t_base = 10 WHERE id='$SOJA_REF'" >/dev/null   # repõe a referência do seed
 
 echo "== Exclusão de talhão com safras =="
