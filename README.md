@@ -20,6 +20,14 @@ Interface em <http://localhost> (login com `ADMIN_EMAIL`/`ADMIN_PASSWORD`), API 
 
 Atalhos do `package.json` da raiz: `pnpm stop`, `pnpm logs:api`, `pnpm migrate`, `pnpm test`, `pnpm test:e2e`, `pnpm etl:status`, `pnpm db:backup`, `pnpm db:restore -- backups/<arquivo>.dump`, `pnpm manual:capture` e `pnpm manual:pdf` (imagens e PDF do manual do usuário), `pnpm clean` (remove **todos** os volumes, inclusive o cache ERA5).
 
+### Após atualizar para o motor 2.2.0 (entressafra)
+
+A migration `add_preseason_water_balance` é aditiva (cinco colunas nulas em `msa_runs`). O balanço hídrico de cada safra passa a começar no último 1º de fevereiro anterior à emergência, então:
+
+1. Confira o `.env`: `PRE_SEASON_KC` (padrão 1,0) e `PRE_SEASON_ZR_MODE` (padrão `zrMax`) — os padrões valem se ausentes; os valores são gravados em cada run.
+2. Faça o backfill ERA5-Land das células dos talhões **desde fevereiro** — **Backfill regional** em `/admin` com o bbox dos talhões e `from` em `AAAA-02-01`, ou `docker compose run --rm etl backfill --harvest <uuid>` por safra. Até lá, as safras processadas ficam `NEEDS_DATA` com os dias da entressafra agrupados por mês no painel.
+3. Depois acione **Processar todas as safras ativas** em `/admin`. As runs antigas (2.1.0) ficam no histórico; o painel mostra "Esta execução não tem entressafra (motor anterior); reprocesse" até a nova run.
+
 ### Após atualizar para o motor 2.1.0 (graus-dia de Ometto)
 
 A migration `adopt_ometto_degree_days` é aditiva (coluna `t_upper`, 30 °C na referência e nas cultivares de soja existentes). As janelas fenológicas mudam para a mesma série, então acione **Processar todas as safras ativas** em `/admin`; as runs antigas (2.0.0) ficam no histórico e o painel avisa que os parâmetros da cultivar mudaram até o reprocessamento.

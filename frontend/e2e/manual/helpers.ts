@@ -76,9 +76,19 @@ export function demoResidue(): number {
   return Number(psql(`select count(*) from users where email like '%@${DEMO_DOMAIN}'`));
 }
 
+/** Início do spin-up de entressafra (motor 2.2.0): último 1º de fevereiro ≤ emergência, como `preSeasonStart` do motor. */
+export function preSeasonStart(emergence: string): string {
+  const [year, month] = emergence.split('-').map(Number) as [number, number];
+  return `${month >= 2 ? year : year - 1}-02-01`;
+}
+
+/** `AAAA-MM` → arquivo trimestral do cache do ETL (`AAAA-Qn.nc`) que cobre o mês. */
+const quarterFile = (ym: string): string => `${ym.slice(0, 4)}-Q${Math.ceil(Number(ym.slice(5, 7)) / 3)}.nc`;
+
 /**
- * Pré-requisitos: o cache do ETL precisa ter os meses da célula de Goiânia desde a
- * emergência. Sem ERA5_E2E_CDS=1, o mês aberto passa a contar como "baixado hoje",
+ * Pré-requisitos: o cache do ETL precisa ter os meses da célula de Goiânia desde o
+ * início do spin-up de entressafra (`preSeasonStart(EMERGENCE)`), em arquivos mensais
+ * ou trimestrais. Sem ERA5_E2E_CDS=1, o mês aberto passa a contar como "baixado hoje",
  * para a captura nunca ir ao CDS.
  */
 export function assertCachePrerequisite(): void {
@@ -87,8 +97,8 @@ export function assertCachePrerequisite(): void {
   // Lag do ERA5-Land (~6 dias, como DATA_LAG_DAYS do backend): nos primeiros dias
   // do mês o mês anterior basta — o MSA só processa até hoje − 6.
   const end = new Date(Date.now() - 6 * 86_400_000);
-  for (let d = new Date(`${EMERGENCE.slice(0, 7)}-01T12:00:00Z`); d <= end; d.setUTCMonth(d.getUTCMonth() + 1)) needed.push(d.toISOString().slice(0, 7));
-  const missing = needed.filter((m) => !files.includes(`${m}.nc`));
+  for (let d = new Date(`${preSeasonStart(EMERGENCE).slice(0, 7)}-01T12:00:00Z`); d <= end; d.setUTCMonth(d.getUTCMonth() + 1)) needed.push(d.toISOString().slice(0, 7));
+  const missing = needed.filter((m) => !files.includes(`${m}.nc`) && !files.includes(quarterFile(m)));
   if (missing.length > 0) {
     throw new Error(
       `Cache do ETL sem os meses ${missing.join(', ')} da célula de Goiânia (${CELL.lat}; ${CELL.lon}). ` +

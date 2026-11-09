@@ -91,7 +91,7 @@ $$PBIAS = \frac{\sum_{i=1}^{n}(O_i - S_i)}{\sum_{i=1}^{n} O_i} \times 100\%$$
 
 **Procedimento:**
 1. Selecionar uma safra de soja com data de emergência, cultivar e dados de solo conhecidos; sempre que possível, com a **produtividade potencial** ($Y_m$, informada na safra como `expectedYield`, sc/ha) e a **produtividade observada** (colhida) registradas
-2. Usar os dados ERA5-Land do período da safra como entrada
+2. Usar os dados ERA5-Land do período da safra como entrada — desde o motor 2.2.0, o período da run começa em `preSeasonStart(emergência)` (último 1º de fevereiro ≤ emergência, `algoritmos.md` §5), então a série precisa cobrir também a entressafra
 3. Executar o balanço hídrico no MSA
 4. Executar o mesmo balanço no CROPWAT 8.0 (módulo Soil Water Balance)
 5. Comparar $Dr_d$ e $Ks_d$ diários com RMSE e NSE
@@ -100,8 +100,16 @@ $$PBIAS = \frac{\sum_{i=1}^{n}(O_i - S_i)}{\sum_{i=1}^{n} O_i} \times 100\%$$
    $$E_{rel} = \frac{Y_{predita} - Y_{observada}}{Y_{observada}}$$
 
    Implementado em `relativeError()` (`backend/scripts/validation/metrics.ts`). Registrar no relatório, para cada safra, $Y_m$, o índice do ciclo, `phasesReached`, $Y_{predita}$, $Y_{observada}$ e $E_{rel}$.
+7. **Depleção na emergência × balanço climatológico de Thornthwaite-Mather** (motor 2.2.0, `algoritmos.md` §5). A run informa `emergenceDepletionMm` e `emergenceDepletionPct` (depleção calculada pelo spin-up de entressafra, convertida para $Zr_{ini}$) — o painel os mostra no cartão "Água no solo na emergência" e `GET /harvests/:id/msa` os devolve. Na planilha, com a **mesma série** ERA5-Land (exportada com "Mostrar entressafra" ligado, para ter os dias `PRE` com ET₀ e chuva), fazer o balanço de Thornthwaite & Mather (1955) de 1º de fevereiro à véspera da emergência com $CAD = TAW(Zr_{max}) = 1000(\theta_{FC} - \theta_{WP})\,Zr_{max}$ (160 mm/m × 0,95 m = 152 mm com os padrões), partindo de $ARM = CAD$: $P - ETP$ do dia; se negativo, $ARM_d = ARM_{d-1} \cdot e^{(P-ETP)/CAD}$ (negativo acumulado), senão $ARM_d = \min(ARM_{d-1} + (P - ETP), CAD)$; depleção $= CAD - ARM$. Comparar a depleção do perfil na véspera da emergência com a do MSA antes da conversão ($Dr_{pre}$, última linha `PRE` da série exportada) e, convertida por $Zr_{ini}/Zr_{pre}$, com `emergenceDepletionMm`. As diferenças esperadas vêm de (a) o MSA esgotar linearmente até RAW e depois pelo Ks (Eq. 84), enquanto TM esgota exponencialmente desde o início, e (b) o Kc da entressafra.
+8. **Sensibilidade ao Kc da entressafra** (questão nº 11): rodar, para a célula do talhão,
 
-**Critério de aceitação:** NSE ≥ 0,80 para $Dr_d$. Para a produtividade, **não há critério de aceitação fixo nesta etapa**: o erro relativo é registrado no relatório e serve para discutir a aderência do índice FAO-33 nas safras disponíveis (a predição é um valor único, sem faixa de incerteza — ver limitação em `algoritmos.md` §6).
+   ```bash
+   cd backend && pnpm msa:validate-preseason -- --cell -16.7,-49.3 --emergence 2025-11-01 --out ../validacao/saida/preseason-goiania.csv
+   ```
+
+   (`--soil 0.28,0.12`, `--altitude 741`, `--kc 0.4,0.7,1.0` e `--zr-mode zrMax` são os padrões; `--zr-mode zrIni` repete a análise com o perfil inicial; um CSV `date, tmax, tmin, tdew, u2, rn, precipitation` substitui `--cell`). O script roda o balanço de `preSeasonStart(emergência)` à véspera da emergência para cada Kc e imprime a depleção ao fim da entressafra (mm e % de $TAW(Zr_{pre})$) e convertida para $Zr_{ini}$ (mm e % de $TAW(Zr_{ini})$), com chuva e ET₀ acumuladas; `--out` grava `kc;zr_m;dr_pre_mm;dr_ini_mm;dr_ini_pct;chuva_mm;et0_mm`.
+
+**Critério de aceitação:** NSE ≥ 0,80 para $Dr_d$ (passo 5; a comparação com o CROPWAT deve partir da **mesma depleção inicial** na emergência — a do MSA, `emergenceDepletionMm`). Para a produtividade, **não há critério de aceitação fixo nesta etapa**: o erro relativo é registrado no relatório e serve para discutir a aderência do índice FAO-33 nas safras disponíveis (a predição é um valor único, sem faixa de incerteza — ver limitação em `algoritmos.md` §6). Para a depleção na emergência (passos 7 e 8) **também não há critério**: o caso é descritivo. Registrar, por safra, `preSeasonFrom`, `preSeasonKc`, `preSeasonZr`, chuva e ET₀ acumuladas da entressafra, $Dr_{pre}$ e `emergenceDepletionMm`/`Pct` do MSA, a depleção de Thornthwaite-Mather na véspera da emergência (bruta e convertida) e a tabela de sensibilidade (Kc 0,4 / 0,7 / 1,0 × `zrMax`/`zrIni`); na dissertação, a discussão alimenta as questões nº 11 e 12 de `questoes-abertas.md`.
 
 ---
 
@@ -191,7 +199,7 @@ docs/msa/validation_results/
 | Etapa | Quando | Responsável |
 |---|---|---|
 | Validação ET₀ (Caso 1) | Após implementação de `et0.calculator.ts` | Heb + dev |
-| Validação balanço hídrico e produtividade predita × observada (Caso 2) | Motor pronto (`engine/water-balance.ts`, `engine/yield.ts`); exige safras históricas com produtividade observada | Heb + dev |
+| Validação balanço hídrico e produtividade predita × observada (Caso 2) | Motor pronto (`engine/water-balance.ts`, `engine/yield.ts`); exige safras históricas com produtividade observada. Passos 7–8 (depleção na emergência × Thornthwaite-Mather; sensibilidade ao Kc da entressafra): motor 2.2.0 (`engine/pre-season.ts`), célula com ERA5 desde fevereiro | Heb + dev |
 | Validação QM (Caso 4) | Após implementação de `era5_bias_correct.py` | Heb + dev |
 | Comparação de métodos de graus-dia (Caso 5) | Motor 2.1.0 (`engine/gda.ts`, Ometto); série sintética imediata, célula de Goiânia após o backfill | Heb + dev |
 | Relatório final de validação | Antes da defesa da dissertação | Heb |

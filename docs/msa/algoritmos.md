@@ -3,7 +3,7 @@
 > **Audiência:** Heb Rejane Moreira Pires (pesquisadora), orientadores, banca avaliadora.  
 > **Objetivo:** Rastreabilidade completa entre as equações descritas na dissertação e o código TypeScript implementado.
 
-> **Onde está o código:** o motor de cálculo é a biblioteca de funções puras `backend/src/modules/msa/engine/` (sem banco, API ou ERA5-Land), exportada por `engine/index.ts`. Cada função tem JSDoc com a fonte e o número da equação. Os tipos (`CultivarParams`, `SoilParams`, `DailyWeather`, `DailyBalanceRow`, `PhaseSummary`, `CycleYield`) estão em `engine/types.ts`. As seções 1 a 6 estão implementadas no motor (`ENGINE_VERSION` 2.1.0 — graus-dia pelo método de Ometto desde 2026-11-03; determinístico: uma execução do balanço por run); a persistência dos resultados, a fila de jobs e os endpoints estão descritos em `docs/modulos/msa.md`.
+> **Onde está o código:** o motor de cálculo é a biblioteca de funções puras `backend/src/modules/msa/engine/` (sem banco, API ou ERA5-Land), exportada por `engine/index.ts`. Cada função tem JSDoc com a fonte e o número da equação. Os tipos (`CultivarParams`, `SoilParams`, `DailyWeather`, `DailyBalanceRow`, `PhaseSummary`, `CycleYield`) estão em `engine/types.ts`. As seções 1 a 6 estão implementadas no motor (`ENGINE_VERSION` 2.2.0 — graus-dia pelo método de Ometto desde 2026-11-03 e balanço hídrico com **entressafra** (spin-up desde o último 1º de fevereiro anterior à emergência, §5) desde 2026-11-09; determinístico: uma execução do balanço por run); a persistência dos resultados, a fila de jobs e os endpoints estão descritos em `docs/modulos/msa.md`.
 
 > **Escopo (desde 2026-11-02):** o MSA prediz a produtividade da soja frente à produtividade potencial informada por safra. O módulo de Monte Carlo (antiga seção 7) e os cenários de decisão de adubação (antiga seção 8) foram removidos — ver `docs/msa/questoes-abertas.md`, registro da reunião com o professor Adilson.
 
@@ -98,7 +98,7 @@ embora já citasse Ometto (1981) como fonte. Esse método residual é exatamente
 | `dailyGDA(tmax, tmin, tBase, tUpper?)` | $GDA_d$ pelos cinco casos e convenções acima; `tUpper` nulo ou omitido = sem base superior |
 | `accumulateGDA(series, tBase, tUpper?)` | $GDA_{acum}$ dia a dia, série do mesmo tamanho da entrada |
 
-Chamadores: `runDailyBalance` (`engine/water-balance.ts`, passo 1 de cada dia, com `cultivar.tUpper ?? null`) e `resolveInterval` (`src/modules/msa/msa.service.ts`), que percorre a série desde a emergência até atingir `gdaTotal` para fixar o intervalo da run. Testes: `gda-phenology-kc.test.ts` (os sete cenários da tabela; bordas $T_{min} = T_b$, $T_{max} = T_B$, $T_{max} = T_{min}$, $T_{min} \ge T_B$; continuidade; regressão com o residual sem $T_B$; entradas inválidas) e `invariants.test.ts` ($0 \le GDA_d \le T_B - T_b$ com `tUpper` nulo ou aleatório).
+Chamadores: `runDailyBalance` (`engine/water-balance.ts`, passo 1 de cada dia, com `cultivar.tUpper ?? null`) e `resolveInterval` (`src/modules/msa/msa.service.ts`), que percorre a série desde a emergência até atingir `gdaTotal` para fixar o fim do intervalo da run (os dias de entressafra anteriores à emergência não acumulam GDA — §5). Testes: `gda-phenology-kc.test.ts` (os sete cenários da tabela; bordas $T_{min} = T_b$, $T_{max} = T_B$, $T_{max} = T_{min}$, $T_{min} \ge T_B$; continuidade; regressão com o residual sem $T_B$; entradas inválidas) e `invariants.test.ts` ($0 \le GDA_d \le T_B - T_b$ com `tUpper` nulo ou aleatório).
 
 ---
 
@@ -118,6 +118,8 @@ Após calcular $GDA_{acum}$ diário, o sistema compara com os limiares da cultiv
 **Convenção adotada no motor:** a janela do dia *d* é determinada pelo GDA acumulado **ao fim** do dia *d* (inclui o GDA do próprio dia), com limite inferior inclusivo: F1 se GDA < `gdaF1End`; F2 se `gdaF1End` ≤ GDA < `gdaF2End`; F3 se `gdaF2End` ≤ GDA < `gdaF3End`; F4 se `gdaF3End` ≤ GDA < `gdaTotal`; `COMPLETED` se GDA ≥ `gdaTotal`.
 
 **Profundidade radicular (Zr):** linear de `zrIni` (GDA 0) a `zrMax` no início de F3 (GDA = `gdaF2End`), constante depois; nunca decresce.
+
+**Dias de entressafra (`PRE`) ficam fora das janelas.** Desde o motor 2.2.0 a série da run começa antes da emergência (§5, spin-up) e esses dias recebem `phase = 'PRE'`, GDA 0 e acumulado 0. `PRE` não é uma janela fenológica: `phaseFromGDA` **nunca** o devolve (o tipo `CropPhase = Exclude<Phase, 'PRE'>` restringe `kcForPhase` e `rootDepth`; em runtime `kcForPhase('PRE')` lança `RangeError`), `YIELD_PHASES` continua F1–F4, `summarizeByPhase` ignora os dias `PRE` (como já ignorava `COMPLETED`) e o índice do ciclo (§6) não os vê. A linha do tempo e os resumos do painel começam na emergência.
 
 ### Implementação
 `src/modules/msa/engine/phenology.ts` → `phaseFromGDA(gdaAccum, cultivar)` e `rootDepth(gdaAccum, cultivar)`
@@ -263,10 +265,46 @@ $$ETc_{adj} = Ks \cdot ETc$$
 > ALLEN et al. (1998), Capítulo 8 — *Water stress coefficient, Ks*. Equações 84, 87, 82.  
 > DOORENBOS, J.; PRUITT, W.O. (1977). *Guidelines for predicting crop water requirements*. FAO Paper No. 24.
 
-**Semântica do passo diário adotada no motor:** para cada dia, (1) GDA do dia e acumulado → fase, Zr e Kc; (2) TAW e RAW pelo Zr do dia — ao aprofundar a raiz, TAW cresce e a depleção **não** é alterada; (3) Ks com a depleção do **início** do dia; ET₀, ETc = Kc·ET₀, ETc_adj = Ks·ETc; (4) Dr_d = clamp(Dr_{d−1} − P_d + ETc_adj, 0, TAW) — chuva acima da depleção zera Dr (excedente = percolação). Depleção inicial configurável (padrão 0 = capacidade de campo).
+**Semântica do passo diário adotada no motor:** para cada dia, (1) GDA do dia e acumulado → fase, Zr e Kc; (2) TAW e RAW pelo Zr do dia — ao aprofundar a raiz, TAW cresce e a depleção **não** é alterada; (3) Ks com a depleção do **início** do dia; ET₀, ETc = Kc·ET₀, ETc_adj = Ks·ETc; (4) Dr_d = clamp(Dr_{d−1} − P_d + ETc_adj, 0, TAW) — chuva acima da depleção zera Dr (excedente = percolação). A depleção inicial (`initialDepletion`, padrão 0 = capacidade de campo) é a do **primeiro dia da série** — desde o motor 2.2.0, o início do spin-up de entressafra, e não mais a emergência (subseção seguinte).
 
 ### Implementação
-`src/modules/msa/engine/water-balance.ts` → `totalAvailableWater(thetaFC, thetaWP, zr)` (Eq. 82), `readilyAvailableWater(p, taw)` (Eq. 83), `stressCoefficient(dr, taw, raw)` (Eq. 84) e `runDailyBalance(days, cultivar, soil, { altitude, initialDepletion })`, que devolve por dia `{ date, phase, gda, gdaAccum, zr, et0, kc, etc, precipitation, dr, ks, etcAdj, taw, raw }`. Determinístico e sem alocação intermediária; executado uma vez por run.
+`src/modules/msa/engine/water-balance.ts` → `totalAvailableWater(thetaFC, thetaWP, zr)` (Eq. 82), `readilyAvailableWater(p, taw)` (Eq. 83), `stressCoefficient(dr, taw, raw)` (Eq. 84) e `runDailyBalance(days, cultivar, soil, { altitude, initialDepletion, preSeason? })`, que devolve por dia `{ date, phase, gda, gdaAccum, zr, et0, kc, etc, precipitation, dr, ks, etcAdj, taw, raw }`. Determinístico e sem alocação intermediária; executado uma vez por run.
+
+### Entressafra (spin-up) e condição inicial
+
+**Motivação.** Até o motor 2.1.0 o balanço começava na data de emergência com $Dr_0 = 0$ — solo na capacidade de campo em outubro/novembro, depois de cinco meses de seca —, o que superestimava a água disponível em F1 e F2 e, por consequência, o $\overline{Ks}$ dessas janelas, o índice do ciclo e a produtividade predita (§6). Desde o motor **2.2.0** (change `add-preseason-water-balance`, 2026-11-09; orientação do professor Adilson na reunião de 2026-11-02) a condição inicial é **calculada**: o balanço começa no **último 1º de fevereiro menor ou igual à emergência**, com o solo na capacidade de campo (fim da estação chuvosa, hipótese razoável no Cerrado), e percorre a entressafra **sem cultura** até a véspera da emergência — um *spin-up* no padrão do balanço hídrico climatológico de Thornthwaite & Mather (1955), que parte do solo cheio e acompanha a depleção pela estação seca.
+
+**Regra da data de início** (`preSeasonStart(emergência)`): $ano_{início} = ano$ se mês da emergência $\ge 2$, senão $ano - 1$; início = `AAAA-02-01`. Exemplos: emergência 2026-10-20 → 2026-02-01; 2027-01-15 → 2026-02-01 (spin-up de ~11 meses); 2027-02-01 → 2027-02-01 (spin-up vazio: a série começa na emergência e $Dr_{ini} = 0$, como no motor anterior). Regra única e fixa, provisória (`docs/msa/questoes-abertas.md`, questão nº 12).
+
+**Dias de entressafra** (`phase = 'PRE'`, `date < emergência`): não há cultura — GDA do dia 0 e acumulado 0 (§2); coeficiente **constante** $Kc_{pre}$ (`PRE_SEASON_KC`, padrão **1,0** = evapotranspiração potencial direta, como em Thornthwaite-Mather, para o solo com palhada do plantio direto); profundidade **constante** $Zr_{pre}$ (`PRE_SEASON_ZR_MODE`: `zrMax` por padrão — o perfil de 0,95 m que a cultura vai explorar —, ou `zrIni`). TAW, RAW, Ks, ET₀, ETc, ETc_adj e $Dr$ seguem **exatamente a mesma cadeia** das Eq. 82–85 acima, com a fração de depleção $p$ da cultivar; a chuva acima da depleção continua percolando (Dr ≥ 0) e Dr não excede $TAW(Zr_{pre})$.
+
+**Conversão na emergência.** No primeiro dia de cultura, antes de qualquer cálculo, a depleção do perfil da entressafra é convertida para a zona radicular inicial da plântula por proporção — a fração esgotada do perfil vale para a camada superficial:
+
+$$Dr_{ini} = Dr_{pre} \cdot \frac{TAW(Zr_{ini})}{TAW(Zr_{pre})} = Dr_{pre} \cdot \frac{Zr_{ini}}{Zr_{pre}}, \qquad Dr_{ini} \le TAW(Zr_{ini})$$
+
+A partir daí o laço é o dos dias de cultura (passos 1–4 da semântica acima), com $Dr_{ini}$ como depleção do início do dia. **Exemplo canônico** ($\theta_{FC}$ 0,28, $\theta_{WP}$ 0,12): $TAW(0{,}95\ \text{m}) = 152$ mm e $TAW(0{,}30\ \text{m}) = 48$ mm; uma entressafra que termina com $Dr_{pre} = 120$ mm (79 % do perfil esgotado) dá $Dr_{ini} = 120 \times 48/152 = 37{,}9$ mm sobre 48 mm — **79 % de depleção na emergência**, ou, como o painel escreve, "o talhão entrou na safra com 21 % da água disponível". A fração esgotada se conserva; só a lâmina muda com o Zr.
+
+**Saída da run** (`msa_runs`): `preSeasonFrom` (= início do spin-up), `preSeasonKc`, `preSeasonZr` (m), `emergenceDepletionMm` (= $Dr_{ini}$) e `emergenceDepletionPct` (= $Dr_{ini} / TAW(Zr_{ini}) \times 100$). Sem dias `PRE` (emergência em 1º de fevereiro) os dois últimos valem 0. Runs de motor anterior a 2.2.0 têm os cinco campos nulos.
+
+**Aproximações registradas como limitação:**
+
+1. **Umidade uniforme no perfil** (conversão de $Zr$). A proporção assume que a fração esgotada é a mesma em toda a profundidade $Zr_{pre}$. Na prática a camada superficial seca mais que o perfil — evaporação do solo e raízes da cultura anterior concentradas em cima —, então, com $Zr_{pre} = zrMax$, a conversão tende a **subestimar** a depleção inicial da plântula. É a aproximação mais simples compatível com um perfil sem camadas (perfil em camadas está fora do escopo); `PRE_SEASON_ZR_MODE = 'zrIni'` é a alternativa (balanço da entressafra já sobre 0,30 m, sem conversão efetiva) e o Caso 2 de `validacao.md` quantifica a diferença.
+2. **Fração de depleção $p$ da cultivar (0,50) no Ks da entressafra**, embora não haja cultura. Nos dias `PRE`, $RAW = p \cdot TAW(Zr_{pre})$ e o Ks da Eq. 84 reduz a evaporação quando a depleção passa de RAW — um substituto grosseiro do decaimento da evaporação do solo nu/com palhada (FAO-56, cap. 7, coeficiente $K_r$ com REW/TEW, não implementado). O efeito é limitar a secagem do perfil no fim da estação seca; a sensibilidade a $Kc_{pre}$ (0,4 / 0,7 / 1,0) do script `pnpm msa:validate-preseason` engloba, na prática, essa aproximação (questão nº 11).
+
+**Parâmetros** (ambiente, `backend/src/config/env.ts`, validados com Zod; snapshot gravado em **cada run**, então mudar o `.env` não altera runs passadas e exige reprocessar):
+
+| Variável | Padrão | Faixa | O que faz |
+|---|---|---|---|
+| `PRE_SEASON_KC` | 1,0 | (0, 1,5] | $Kc_{pre}$ constante dos dias `PRE` (`preSeasonKc` na run) |
+| `PRE_SEASON_ZR_MODE` | `zrMax` | `zrMax` \| `zrIni` | Qual Zr da cultivar vira $Zr_{pre}$ (`preSeasonZr`, em metros, na run) |
+
+Mudar o **valor** dos parâmetros não muda a versão do motor; mudar a **regra da data** de início exige nova `ENGINE_VERSION`.
+
+### Referência bibliográfica (entressafra)
+> THORNTHWAITE, C.W.; MATHER, J.R. (1955). *The water balance*. Publications in Climatology, v. 8, n. 1. Centerton, NJ: Drexel Institute of Technology, Laboratory of Climatology. (Balanço hídrico climatológico: solo na capacidade de campo ao fim do período úmido, evapotranspiração potencial direta e depleção acumulada pela estação seca.)
+
+### Implementação (entressafra)
+`src/modules/msa/engine/pre-season.ts` → `preSeasonStart(emergenceDate)` (último 1º de fevereiro ≤ emergência; `RangeError` para data inválida), `convertDepletion(drPre, tawPre, tawIni)` (a proporção acima, truncada em `tawIni`) e `PRE_SEASON_DEFAULTS = { kc: 1.0 }`. `runDailyBalance(days, cultivar, soil, { altitude, initialDepletion, preSeason: { until, kc, zr } })` (`engine/water-balance.ts`): os dias com `date < until` são o segmento `PRE` **dentro do mesmo laço** (sem estrutura intermediária por dia; a continuidade de Dr é automática); no primeiro dia com `date ≥ until` chama `convertDepletion` e segue com os passos 1–4; valida `until` (`AAAA-MM-DD`), `kc > 0` e `zr > 0` (`RangeError`); sem dias anteriores a `until` o segmento é vazio e o resultado é idêntico ao de uma chamada sem `preSeason`. O serviço (`src/modules/msa/msa.service.ts`, `runProcessing`) monta `from = preSeasonStart(emergência)`, `preSeason = { until: emergência, kc: PRE_SEASON_KC, zr: zrMax | zrIni }` (`config/pre-season.ts` → `preSeasonConfig()`), e grava `emergenceDepletion(drPre, soil, zrPre, zrIni)` a partir da última linha `PRE` (0 quando não há). Testes: `pre-season.test.ts` (datas 2026-10-20 / 2027-01-15 / 2027-02-01; conversão 120 → 37,9 mm e 79 %; entradas inválidas), `water-balance.test.ts` (spin-up seco de 10 dias; chuva de 80 mm zera Dr; conversão na emergência; spin-up vazio ≡ sem `preSeason`; `kc 0` → `RangeError`), `yield.test.ts` (entressafra ignorada nos resumos) e `invariants.test.ts` (`preSeason` aleatório). Validação: `scripts/validation/preseason-validate.ts` (`pnpm msa:validate-preseason`, Caso 2 de `validacao.md`).
 
 ---
 
@@ -335,7 +373,7 @@ Se a mesma safra estivesse ainda em F3 (`phasesReached = 3`), F4 entraria com fa
 | Função | O que calcula |
 |---|---|
 | `yieldReduction(ksMean, ky)` | $RY_j$, truncado em [0, 1] (§6.1) |
-| `summarizeByPhase(series, cultivar)` | resumo F1–F4 `{ days, ksMean, etcAdjAccum, precipAccum, yieldReductionPct }`; janela não alcançada: `days = 0`, `ksMean` e `yieldReductionPct` nulos |
+| `summarizeByPhase(series, cultivar)` | resumo F1–F4 `{ days, ksMean, etcAdjAccum, precipAccum, yieldReductionPct }`; janela não alcançada: `days = 0`, `ksMean` e `yieldReductionPct` nulos; dias `PRE` (entressafra, §5) e `COMPLETED` ignorados |
 | `cycleYieldIndex(summaries)` | `{ yieldIndex, phasesReached, factors }` — `factors[j] = 1 − yieldReductionPct_j / 100` nas janelas com dias, 1 nas demais; `yieldIndex = Π factors` (§6.2) |
 | `predictedYield(ym, yieldIndex)` | $Y_m \times$ índice, na unidade de $Y_m$ (§6.3) |
 
@@ -360,7 +398,11 @@ O serviço (`src/modules/msa/msa.service.ts`, `runProcessing` → `yieldFields(c
 | $TAW$ | Total de água disponível | mm |
 | $RAW$ | Água prontamente disponível | mm |
 | $Dr$ | Depleção na zona radicular | mm |
+| $Dr_{pre}$ | Depleção do perfil da entressafra na véspera da emergência (último dia `PRE`, Zr = $Zr_{pre}$) — §5 | mm |
+| $Dr_{ini}$ | Depleção inicial da cultura na emergência, convertida de $Dr_{pre}$ por proporção: $Dr_{pre} \cdot TAW(Zr_{ini}) / TAW(Zr_{pre})$ (`emergenceDepletionMm`; em % de $TAW(Zr_{ini})$: `emergenceDepletionPct`) | mm |
 | $Zr$ | Profundidade efetiva da zona radicular | m |
+| $Zr_{pre}$, $Kc_{pre}$ | Profundidade e coeficiente constantes do spin-up de entressafra (`PRE_SEASON_ZR_MODE` → `zrMax` ou `zrIni` da cultivar; `PRE_SEASON_KC`, padrão 1,0) — gravados na run como `preSeasonZr`/`preSeasonKc` | m; adimensional |
+| entressafra (`PRE`) | Dias do balanço anteriores à emergência, do último 1º de fevereiro ≤ emergência (`preSeasonFrom`) até a véspera; sem cultura (GDA 0), fora das janelas F1–F4 | — |
 | $p$ | Fração de depleção permitida sem estresse | 0–1 |
 | $\theta_{FC}$ | Umidade volumétrica na capacidade de campo | m³/m³ |
 | $\theta_{WP}$ | Umidade volumétrica no ponto de murcha | m³/m³ |

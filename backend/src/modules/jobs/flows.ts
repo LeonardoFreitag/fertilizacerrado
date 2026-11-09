@@ -102,15 +102,16 @@ export type HarvestJobPlan = 'process' | 'backfill' | 'process-only-lag';
 
 /**
  * Decisão na criação da safra: emergência dentro do lag ⇒ só processar (vira
- * NEEDS_DATA, deixando rastro); lacuna de cobertura ⇒ ingerir a célula antes;
- * cobertura completa ⇒ só processar.
+ * NEEDS_DATA, deixando rastro) — avaliada sobre a EMERGÊNCIA, não sobre o início
+ * do spin-up; lacuna de cobertura em [preSeasonStart, limite] ⇒ ingerir a célula
+ * antes; cobertura completa ⇒ só processar.
  */
 export function planHarvestJobs(
   coverage: { missingDates: string[] } | null,
-  from: string,
+  emergence: string,
   limit: string,
 ): HarvestJobPlan {
-  if (from > limit) return 'process-only-lag';
+  if (emergence > limit) return 'process-only-lag';
   if (!coverage || coverage.missingDates.length > 0) return 'backfill';
   return 'process';
 }

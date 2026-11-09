@@ -34,7 +34,7 @@ function kyFor(phase: YieldPhase, cultivar: CultivarParams): number {
  * Resumo por janela fenológica: dias, Ks médio, ETc_adj e precipitação
  * acumuladas e redução de produtividade (%) pela Eq. 3.2 do FAO-33.
  * Sempre devolve F1–F4 em ordem; janela sem dias tem `days = 0` e `ksMean` /
- * `yieldReductionPct` nulos. Dias COMPLETED são ignorados.
+ * `yieldReductionPct` nulos. Dias PRE (entressafra) e COMPLETED são ignorados.
  */
 export function summarizeByPhase(
   series: ReadonlyArray<DailyBalanceRow>,
@@ -47,7 +47,7 @@ export function summarizeByPhase(
 
   for (let i = 0; i < series.length; i++) {
     const row = series[i]!;
-    if (row.phase === 'COMPLETED') continue;
+    if (row.phase === 'COMPLETED' || row.phase === 'PRE') continue; // fora das janelas com Ky
     const idx = YIELD_PHASES.indexOf(row.phase);
     days[idx]!++;
     ksSum[idx]! += row.ks;

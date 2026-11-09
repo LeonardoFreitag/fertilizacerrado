@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { HarvestResponse, Phase, PhaseView, RunView } from '@/lib/api/types';
 import { PHASE_LABELS } from '@/lib/api/types';
@@ -14,12 +15,15 @@ export function YieldSummary({
   currentPhase,
   harvest,
   canManage,
+  extra,
 }: {
   run: RunView;
   phases: ReadonlyArray<PhaseView> | null;
   currentPhase: Phase | null;
   harvest: HarvestResponse;
   canManage: boolean;
+  /** Cartão complementar (ex.: água no solo na emergência) */
+  extra?: ReactNode;
 }) {
   const rows = phases ? yieldSummaryRows(phases) : null;
   const warnings = yieldWarnings({ phasesReached: run.phasesReached, currentPhase, runYm: run.expectedYield, harvestYm: harvest.expectedYield });
@@ -98,6 +102,8 @@ export function YieldSummary({
             ))}
         </dl>
       </div>
+
+      {extra}
 
       {warnings.partial && (
         <p role="status" data-testid="yield-partial" className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">

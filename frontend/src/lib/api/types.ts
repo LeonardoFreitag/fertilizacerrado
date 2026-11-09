@@ -196,10 +196,12 @@ export interface HarvestPayload {
   notes?: string;
 }
 
-export type Phase = 'F1' | 'F2' | 'F3' | 'F4' | 'COMPLETED';
-export type YieldPhase = Exclude<Phase, 'COMPLETED'>;
+/** `PRE` = entressafra (spin-up antes da emergência, sem cultura). */
+export type Phase = 'PRE' | 'F1' | 'F2' | 'F3' | 'F4' | 'COMPLETED';
+export type YieldPhase = Exclude<Phase, 'COMPLETED' | 'PRE'>;
 export const YIELD_PHASES: YieldPhase[] = ['F1', 'F2', 'F3', 'F4'];
 export const PHASE_LABELS: Record<Phase, string> = {
+  PRE: 'Entressafra',
   F1: 'F1 — Germinação/estabelecimento',
   F2: 'F2 — Crescimento vegetativo',
   F3: 'F3 — Floração/enchimento',
@@ -238,6 +240,14 @@ export interface RunView {
   predictedYield: number | null;
   /** Janelas F1–F4 com dias na série (0–4) */
   phasesReached: number | null;
+  /** Início do spin-up de entressafra (AAAA-MM-DD); null em runs de motor < 2.2.0 */
+  preSeasonFrom: string | null;
+  preSeasonKc: number | null;
+  /** Zr (m) do perfil balanceado na entressafra */
+  preSeasonZr: number | null;
+  /** Depleção na emergência convertida para zrIni (mm) e em % de TAW(zrIni) */
+  emergenceDepletionMm: number | null;
+  emergenceDepletionPct: number | null;
   engineVersion: string;
   cultivarSnapshot: unknown;
   soilSnapshot: unknown;

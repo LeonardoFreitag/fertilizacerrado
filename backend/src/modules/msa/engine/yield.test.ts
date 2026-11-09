@@ -68,6 +68,22 @@ describe('summarizeByPhase', () => {
     expect(summarizeByPhase(series, SOJA).reduce((acc, s) => acc + s.days, 0)).toBe(100 - completed);
   });
 
+  it('ignora dias PRE: resumos e índice iguais aos da série sem entressafra com a mesma depleção inicial', () => {
+    const crop = Array.from({ length: 60 }, (_, i) => ({ ...days[0]!, date: `2026-01-${String(1 + (i % 28)).padStart(2, '0')}`, precipitation: i % 4 === 0 ? 10 : 0 }));
+    const pre = Array.from({ length: 200 }, (_, i) => ({ ...days[0]!, date: `2025-${String(1 + Math.floor(i / 28)).padStart(2, '0')}-${String(1 + (i % 28)).padStart(2, '0')}`, precipitation: 0 }));
+    const withPre = runDailyBalance([...pre, ...crop], SOJA, LATOSSOLO, { altitude: 750, preSeason: { until: crop[0]!.date, kc: 1, zr: SOJA.zrMax } });
+    const drIni = withPre[199]!.dr * (SOJA.zrIni / SOJA.zrMax); // mesma θ ⇒ proporção dos Zr
+    const without = runDailyBalance(crop, SOJA, LATOSSOLO, { altitude: 750, initialDepletion: drIni });
+    const a = summarizeByPhase(withPre, SOJA);
+    const b = summarizeByPhase(without, SOJA);
+    expect(a.reduce((acc, s) => acc + s.days, 0)).toBe(b.reduce((acc, s) => acc + s.days, 0));
+    for (let i = 0; i < 4; i++) {
+      expect(a[i]!.days).toBe(b[i]!.days);
+      if (a[i]!.ksMean !== null) expect(a[i]!.ksMean).toBeCloseTo(b[i]!.ksMean!, 9);
+    }
+    expect(cycleYieldIndex(a).yieldIndex).toBeCloseTo(cycleYieldIndex(b).yieldIndex, 9);
+  });
+
   it('série vazia devolve quatro janelas vazias', () => {
     expect(summarizeByPhase([], SOJA)).toEqual(
       ['F1', 'F2', 'F3', 'F4'].map((phase) => ({
@@ -161,7 +177,7 @@ describe('predictedYield', () => {
 });
 
 describe('versão do motor', () => {
-  it('é 2.1.0 (graus-dia de Ometto; interface compatível)', () => {
-    expect(ENGINE_VERSION).toBe('2.1.0');
+  it('é 2.2.0 (entressafra no balanço; interface compatível)', () => {
+    expect(ENGINE_VERSION).toBe('2.2.0');
   });
 });

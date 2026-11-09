@@ -1,7 +1,7 @@
 import { Badge, Button } from '@/components/ui';
 import type { RunView } from '@/lib/api/types';
 import { RUN_REASON_LABELS } from '@/lib/api/types';
-import { formatDate, formatDateTime, formatIndexPct, formatScHa } from '@/lib/msa/msa';
+import { formatDate, formatDateTime, formatIndexPct, formatScHa, groupMissingDates } from '@/lib/msa/msa';
 
 const TONE = { SUCCEEDED: 'green', NEEDS_DATA: 'amber', FAILED: 'red' } as const;
 
@@ -32,7 +32,11 @@ export function RunsTable({ runs, selectedRunId, latestRunId, onSelect }: { runs
                 <td className="px-4 py-2 text-slate-800">{formatDateTime(r.startedAt)}</td>
                 <td className="px-4 py-2">
                   <Badge tone={TONE[r.status]}>{r.status}</Badge>
-                  {r.status === 'NEEDS_DATA' && r.missingDates && <span className="ml-1 text-xs text-slate-500">{r.missingDates.length} dia(s) faltando</span>}
+                  {r.status === 'NEEDS_DATA' && r.missingDates && (
+                    <span className="ml-1 text-xs text-slate-500" title={groupMissingDates(r.missingDates).grouped ? groupMissingDates(r.missingDates).groups.map((g) => g.label).join('; ') : groupMissingDates(r.missingDates).dates.join(', ')}>
+                      {r.missingDates.length} dia(s) faltando
+                    </span>
+                  )}
                   {r.status === 'FAILED' && r.error && <span className="ml-1 text-xs text-red-700" title={r.error}>erro</span>}
                 </td>
                 <td className="px-4 py-2 text-slate-700">{RUN_REASON_LABELS[r.reason]}</td>

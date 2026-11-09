@@ -178,8 +178,8 @@ cobre o intervalo de hoje − 16 a hoje − 6 dias para todas as células em uso
 respeitando a latência nativa de cerca de cinco dias do produto; a por
 região (`range`), que preenche um período para todas as células de uma caixa
 delimitadora; e a por célula (`cell`), disparada automaticamente ao
-cadastrar uma safra cuja célula ainda não tenha cobertura desde a emergência
-(*backfill*). Cada execução é registrada com identificador do trabalho,
+cadastrar uma safra cuja célula ainda não tenha cobertura desde o início do
+balanço hídrico — o último 1º de fevereiro anterior à emergência (*backfill*). Cada execução é registrada com identificador do trabalho,
 progresso por período, horário de pulsação e estado final, o que permite
 detectar e marcar execuções órfãs.
 
@@ -289,7 +289,8 @@ O fluxo semanal é um *flow* com dependência: o trabalho pai só executa quando
 a ingestão `latest` conclui, e então enfileira um processamento por safra
 ativa com identificador determinístico por data, de modo que uma reexecução no
 mesmo dia não duplica trabalho. Ao cadastrar uma safra, a API verifica a
-cobertura da célula desde a emergência e, havendo lacuna, encadeia a ingestão
+cobertura da célula desde o 1º de fevereiro anterior à emergência (início do
+balanço de entressafra) e, havendo lacuna, encadeia a ingestão
 da célula ao processamento (*backfill*), devolvendo ao cliente o identificador
 do trabalho para acompanhamento. Um painel administrativo expõe as contagens
 por fila, o estado de cada trabalho e os disparos manuais (ingestão,

@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from 'recharts';
 import { Button } from '@/components/ui';
 import type { DailyRow } from '@/lib/api/types';
-import { formatDate, formatDateShort, formatNumber, phaseRanges } from '@/lib/msa/msa';
+import { PHASE_LABELS } from '@/lib/api/types';
+import { formatDate, formatDateShort, formatNumber, phaseRanges, preSeasonRange } from '@/lib/msa/msa';
 import { PHASE_COLORS } from './PhaseTimeline';
 
 function DayTooltip({ active, payload }: TooltipProps<number, string>) {
@@ -10,7 +11,7 @@ function DayTooltip({ active, payload }: TooltipProps<number, string>) {
   const d = payload[0]?.payload as DailyRow | undefined;
   if (!d) return null;
   const rows: [string, string][] = [
-    ['Fase', d.phase],
+    ['Fase', d.phase === 'PRE' ? PHASE_LABELS.PRE : d.phase],
     ['GDA acumulado', formatNumber(d.gdaAccum, 0)],
     ['ET₀', `${formatNumber(d.et0)} mm`],
     ['Kc', formatNumber(d.kc)],
@@ -44,14 +45,28 @@ function usePhaseAreas(days: ReadonlyArray<DailyRow>) {
 
 const tick = (v: string) => formatDateShort(v);
 
-export function MsaCharts({ days, banner }: { days: ReadonlyArray<DailyRow>; banner: { text: string; onReset: () => void } | null }) {
+export interface PreSeasonToggle {
+  /** A run tem entressafra (preSeasonFrom); sem ela o alternador fica desabilitado */
+  available: boolean;
+  enabled: boolean;
+  onToggle: () => void;
+}
+
+export function MsaCharts({ days, banner, preSeason }: { days: ReadonlyArray<DailyRow>; banner: { text: string; onReset: () => void } | null; preSeason?: PreSeasonToggle }) {
   const data = useMemo(() => days.map((d) => ({ ...d })), [days]);
   const areas = usePhaseAreas(days);
+  const pre = useMemo(() => preSeasonRange(days), [days]);
   const interval = Math.max(0, Math.floor(days.length / 12) - 1);
   const halfInterval = Math.max(0, Math.floor(days.length / 6) - 1); // gráficos de meia largura: metade dos rótulos
 
   return (
     <div className="space-y-4" data-testid="msa-charts">
+      {preSeason && (
+        <label className={`flex items-center gap-2 text-sm ${preSeason.available ? 'text-slate-700' : 'text-slate-400'}`} title={preSeason.available ? 'Inclui os dias de entressafra (spin-up desde 1º de fevereiro) nos três gráficos' : 'Esta execução não tem entressafra (motor anterior)'}>
+          <input type="checkbox" data-testid="toggle-preseason" checked={preSeason.enabled} disabled={!preSeason.available} onChange={preSeason.onToggle} />
+          Mostrar entressafra
+        </label>
+      )}
       {banner && (
         <div role="status" className="flex items-center justify-between rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-800">
           <span>{banner.text}</span>
@@ -67,8 +82,10 @@ export function MsaCharts({ days, banner }: { days: ReadonlyArray<DailyRow>; ban
           <ResponsiveContainer>
             <ComposedChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              {/* yAxisId obrigatório: o gráfico tem dois eixos Y nomeados e, sem ele, o Recharts descarta a área */}
+              {pre && <ReferenceArea yAxisId="mm" x1={pre.start} x2={pre.end} fill="#94a3b8" fillOpacity={0.12} label={{ value: 'Entressafra', position: 'insideTop', fontSize: 11, fill: '#475569' }} />}
               {areas.map((a) => (
-                <ReferenceArea key={a.phase} x1={a.start} x2={a.end} fill={PHASE_COLORS[a.phase].fill} fillOpacity={0.08} label={{ value: a.phase, position: 'insideTop', fontSize: 11, fill: '#475569' }} />
+                <ReferenceArea key={a.phase} yAxisId="mm" x1={a.start} x2={a.end} fill={PHASE_COLORS[a.phase].fill} fillOpacity={0.08} label={{ value: a.phase, position: 'insideTop', fontSize: 11, fill: '#475569' }} />
               ))}
               <XAxis dataKey="date" tickFormatter={tick} interval={interval} fontSize={11} />
               <YAxis yAxisId="mm" fontSize={11} width={36} />

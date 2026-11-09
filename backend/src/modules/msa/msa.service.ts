@@ -6,16 +6,20 @@
 import type { MsaRun, MsaRunReason } from '@prisma/client';
 import { qmRepository, type QmCalibrationSummary } from '../admin-qm/qm.repository';
 import { AppError } from '../../utils/app-error';
+import { preSeasonConfig } from '../../config/pre-season';
 import { CULTIVAR_PARAM_KEYS } from '../cultivars/dtos/cultivar-params.schema';
 import { harvestService } from '../harvests/harvest.service';
 import type { AuthUser } from '../properties/property.service';
 import {
   ENGINE_VERSION,
+  convertDepletion,
   cycleYieldIndex,
   dailyGDA,
   predictedYield,
+  preSeasonStart,
   runDailyBalance,
   summarizeByPhase,
+  totalAvailableWater,
   type CultivarParams,
   type CycleYield,
   type DailyBalanceRow,
@@ -84,6 +88,14 @@ export interface RunView {
   predictedYield: number | null;
   /** Janelas F1–F4 com dias na série (0–4) */
   phasesReached: number | null;
+  /** Início do spin-up de entressafra (AAAA-MM-DD); null em runs de motor < 2.2.0 */
+  preSeasonFrom: string | null;
+  /** Kc e Zr (m) usados na entressafra */
+  preSeasonKc: number | null;
+  preSeasonZr: number | null;
+  /** Depleção na emergência, convertida para zrIni (mm) e em % de TAW(zrIni) */
+  emergenceDepletionMm: number | null;
+  emergenceDepletionPct: number | null;
   engineVersion: string;
   cultivarSnapshot: unknown;
   soilSnapshot: unknown;
@@ -135,6 +147,11 @@ export function toRunView(run: MsaRun): RunView {
     yieldIndex: run.yieldIndex,
     predictedYield: run.predictedYield,
     phasesReached: run.phasesReached,
+    preSeasonFrom: run.preSeasonFrom ? toStr(run.preSeasonFrom) : null,
+    preSeasonKc: run.preSeasonKc,
+    preSeasonZr: run.preSeasonZr,
+    emergenceDepletionMm: run.emergenceDepletionMm,
+    emergenceDepletionPct: run.emergenceDepletionPct,
     engineVersion: run.engineVersion,
     cultivarSnapshot: run.cultivarSnapshot,
     soilSnapshot: run.soilSnapshot,
@@ -228,13 +245,15 @@ export function resolveInterval(
   limit: string,
   series: DailyWeather[],
   cultivar: CultivarParams,
+  emergence: string = from,
 ): Interval {
-  if (from > limit) return { from, to: from, days: [], missingDates: [from] };
+  if (emergence > limit) return { from, to: emergence, days: [], missingDates: [emergence] };
 
   let to = limit;
   let gdaAccum = 0;
   for (const day of series) {
     if (day.date < from || day.date > limit) continue;
+    if (day.date < emergence) continue; // entressafra: o GDA só conta a partir da emergência
     gdaAccum += dailyGDA(day.tmax, day.tmin, cultivar.tBase, cultivar.tUpper ?? null);
     if (gdaAccum >= cultivar.gdaTotal) {
       to = day.date;
@@ -261,6 +280,16 @@ function summaryRows(summaries: PhaseSummary[]): SummaryCreate[] {
     phase: s.phase, days: s.days, ksMean: s.ksMean, etcAdjAccum: s.etcAdjAccum, precipAccum: s.precipAccum,
     yieldReductionPct: s.yieldReductionPct,
   }));
+}
+
+/**
+ * Depleção na emergência: Dr do último dia de entressafra convertido para a zona
+ * radicular inicial (proporção pela TAW) e em % de TAW(zrIni); 0 sem spin-up.
+ */
+export function emergenceDepletion(drPre: number, soil: SoilSnapshot, zrPre: number, zrIni: number) {
+  const tawIni = totalAvailableWater(soil.thetaFC, soil.thetaWP, zrIni);
+  const mm = drPre > 0 ? convertDepletion(drPre, totalAvailableWater(soil.thetaFC, soil.thetaWP, zrPre), tawIni) : 0;
+  return { emergenceDepletionMm: mm, emergenceDepletionPct: (mm / tawIni) * 100 };
 }
 
 /** Campos da run derivados do índice do ciclo e da Ym da safra. */
@@ -290,13 +319,18 @@ async function runProcessing(harvest: HarvestForProcessing, options: ProcessOpti
     const soil = snapshotSoil(harvest.field); // 422 sem altitude, antes de qualquer run
     const cultivar = snapshotCultivar(harvest.cultivar);
 
-    const from = toStr(harvest.emergenceDate);
+    // Spin-up de entressafra desde o último 1º de fevereiro; a condição "dentro do
+    // lag" é avaliada sobre a emergência (sem dias de cultura não há o que processar).
+    const emergence = toStr(harvest.emergenceDate);
+    const from = preSeasonStart(emergence);
     const limit = addDays(todayUtc(), -DATA_LAG_DAYS);
-    const series = from > limit ? [] : await era5Repository.getDailySeriesForField(harvest.field.id, from, limit);
+    const series = emergence > limit ? [] : await era5Repository.getDailySeriesForField(harvest.field.id, from, limit);
     if (series === null) {
       throw new AppError(422, 'FIELD_WITHOUT_ERA5_CELL', `O talhão "${harvest.field.name}" não tem célula ERA5-Land.`);
     }
-    const interval = resolveInterval(from, limit, series, cultivar);
+    const interval = resolveInterval(from, limit, series, cultivar, emergence);
+    const pre = preSeasonConfig();
+    const preSeasonZr = pre.zrMode === 'zrMax' ? cultivar.zrMax : cultivar.zrIni;
     const cell = await era5Repository.getCell(harvest.field.id);
     const calibration = cell ? await qmRepository.activeForCell(cell.cellLat, cell.cellLon) : null;
     const startedAt = new Date();
@@ -305,6 +339,7 @@ async function runProcessing(harvest: HarvestForProcessing, options: ProcessOpti
       cultivarSnapshot: cultivar as object, soilSnapshot: soil as object, engineVersion: ENGINE_VERSION,
       triggeredById, reason: options.reason ?? 'MANUAL', jobId: options.jobId ?? null,
       qmCalibrationId: calibration?.id ?? null,
+      preSeasonFrom: toDate(from), preSeasonKc: pre.kc, preSeasonZr,
     };
 
     if (interval.missingDates.length > 0) {
@@ -313,11 +348,24 @@ async function runProcessing(harvest: HarvestForProcessing, options: ProcessOpti
     }
 
     try {
-      const series = runDailyBalance(interval.days, cultivar, soil, { altitude: soil.altitudeM, initialDepletion: 0 });
+      const series = runDailyBalance(interval.days, cultivar, soil, {
+        altitude: soil.altitudeM, initialDepletion: 0,
+        preSeason: { until: emergence, kc: pre.kc, zr: preSeasonZr },
+      });
+      // Invariante: uma run SUCCEEDED tem ao menos um dia de cultura (currentPhase nunca é PRE).
+      let lastPreIndex = -1;
+      for (let i = series.length - 1; i >= 0; i--) if (series[i]!.phase === 'PRE') { lastPreIndex = i; break; }
+      if (lastPreIndex === series.length - 1) {
+        const run = await msaRepository.createRun({ ...base, status: 'NEEDS_DATA', finishedAt: new Date(), missingDates: [emergence] });
+        return { run: await runView(run), phases: null, currentPhase: null };
+      }
       const summaries = summarizeByPhase(series, cultivar);
       const cycle = cycleYieldIndex(summaries);
       const run = await msaRepository.createSucceededRun(
-        { ...base, status: 'SUCCEEDED', finishedAt: new Date(), ...yieldFields(cycle, harvest.expectedYield) },
+        {
+          ...base, status: 'SUCCEEDED', finishedAt: new Date(), ...yieldFields(cycle, harvest.expectedYield),
+          ...emergenceDepletion(lastPreIndex >= 0 ? series[lastPreIndex]!.dr : 0, soil, preSeasonZr, cultivar.zrIni),
+        },
         dailyRows(series),
         summaryRows(summaries),
       );
@@ -358,11 +406,11 @@ export const msaService = {
     };
   },
 
-  async getDaily(user: AuthUser, harvestId: string, runId?: string) {
+  async getDaily(user: AuthUser, harvestId: string, runId?: string, includePreSeason = false) {
     await accessibleHarvest(user, harvestId);
     const run = runId ? await msaRepository.findRun(harvestId, runId) : await msaRepository.latestSucceededRun(harvestId);
     if (!run) throw runId ? new AppError(404, 'NOT_FOUND', 'Run não encontrada para esta safra.') : noResult();
-    const rows = await msaRepository.dailyResults(run.id);
+    const rows = await msaRepository.dailyResults(run.id, { includePreSeason });
     return { runId: run.id, days: rows.map(({ runId: _r, date, ...rest }) => ({ date: toStr(date), ...rest })) };
   },
 

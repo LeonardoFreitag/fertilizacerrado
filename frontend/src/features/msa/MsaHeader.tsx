@@ -3,6 +3,7 @@ import type { DailyRow, HarvestResponse, MsaLatest, PhaseView, RunView } from '@
 import { PHASE_LABELS, RUN_REASON_LABELS } from '@/lib/api/types';
 import { downloadCsv, slug, toCsv } from '@/lib/msa/csv';
 import { formatDate, formatDateTime, formatNumber, summariesCsv } from '@/lib/msa/msa';
+import { MissingDates } from './MissingDates';
 
 const STATUS_TONE = { SUCCEEDED: 'green', NEEDS_DATA: 'amber', FAILED: 'red' } as const;
 
@@ -118,8 +119,7 @@ export function MsaHeader({
           A tentativa mais recente ({formatDateTime(newerProblem.startedAt)}) terminou <strong>{newerProblem.status}</strong>
           {newerProblem.status === 'NEEDS_DATA' && newerProblem.missingDates && (
             <>
-              {' '}— faltam {newerProblem.missingDates.length} dia(s) de ERA5-Land: {newerProblem.missingDates.slice(0, 6).map(formatDate).join(', ')}
-              {newerProblem.missingDates.length > 6 && '…'}
+              {' '}— <MissingDates dates={newerProblem.missingDates} prefix="faltam dados ERA5-Land para" />
             </>
           )}
           {newerProblem.status === 'FAILED' && newerProblem.error && <> — {newerProblem.error}</>}. O painel mostra a última run bem-sucedida.

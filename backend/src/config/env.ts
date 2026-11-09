@@ -32,6 +32,11 @@ const envSchema = z
     SMTP_PASS: z.string().optional(),
     SMTP_FROM: z.string().email().default('noreply@dominio.com.br'),
 
+    /** Entressafra (spin-up do balanço desde 1º de fevereiro): Kc constante do solo com palhada; 1,0 = ETP direta (questão #11) */
+    PRE_SEASON_KC: z.coerce.number().gt(0, 'deve ser maior que 0').max(1.5, 'deve ser no máximo 1.5').default(1),
+    /** Perfil balanceado na entressafra: zrMax (perfil que a cultura vai explorar) ou zrIni */
+    PRE_SEASON_ZR_MODE: z.enum(['zrMax', 'zrIni']).default('zrMax'),
+
     // Usadas apenas por prisma/seed.ts; a aplicação não as lê.
     ADMIN_EMAIL: z.string().trim().toLowerCase().email().optional(),
     ADMIN_PASSWORD: z.string().optional(),

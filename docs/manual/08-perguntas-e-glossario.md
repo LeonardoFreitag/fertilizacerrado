@@ -59,6 +59,9 @@ Não. Use **Atualizar a partir da referência**, na tela de edição da cultivar
 **Cadastrei a safra e o painel não apareceu.**
 O processamento leva de alguns segundos a alguns minutos. Se aparecer **Sem processamento do MSA**, leia o motivo na própria tela. Os casos mais comuns são falta de dados de clima para os dias mais recentes e talhão sem altitude. Veja o [capítulo 6](06-painel-agrometeorologico.md#quando-aparece-sem-processamento-do-msa).
 
+**Por que o processamento pede dados desde fevereiro, se a lavoura nasceu em outubro?**
+Porque a conta da água no solo começa no 1º de fevereiro anterior à emergência, quando o solo costuma estar cheio pelas chuvas de verão, e acompanha a entressafra inteira para saber com quanta água o talhão entrou na safra. Na primeira safra de uma região nova, o sistema precisa baixar esses meses antes de calcular, e o quadro **Sem processamento do MSA** lista os dias que faltam, agrupados por mês. O download é automático; quando termina, a safra é processada sozinha. Veja o [capítulo 5](05-safras.md#por-que-a-safra-começa-em-fevereiro) e [Entressafra](#entressafra-spin-up).
+
 **Os dados param cinco ou seis dias antes de hoje. É defeito?**
 Não. Os dados de clima são publicados com cerca de cinco dias de atraso. O sistema não trabalha com previsão do tempo nem com dados do dia.
 
@@ -90,6 +93,10 @@ Não. Cancele a safra e cadastre outra com a cultivar correta.
 
 Os termos estão em ordem alfabética.
 
+### Água no solo na emergência
+
+Cartão do bloco Produtividade que diz com quanta água o talhão entrou na safra: **O talhão entrou na safra com N % da água disponível**. 100% é o solo cheio, na capacidade de campo. O valor não é adivinhado: vem da conta da água no solo feita desde o 1º de fevereiro anterior, pela [entressafra](#entressafra-spin-up). O cartão mostra também a [depleção](#depleção-dr) na emergência em milímetros, a chuva dos 30 dias anteriores e o período da conta. Veja o [capítulo 6](06-painel-agrometeorologico.md#água-no-solo-na-emergência).
+
 ### Capacidade de campo e ponto de murcha
 
 A capacidade de campo é a água que o solo guarda depois que o excesso de uma chuva escorre. O ponto de murcha é a água que sobra quando a planta já não consegue retirar mais nada. A diferença entre os dois é a água que a lavoura pode usar. Nas telas aparecem como θFC e θWP.
@@ -101,6 +108,10 @@ Ajuste da chuva estimada pelo ERA5-Land com base em anos de medições de uma es
 ### Depleção (Dr)
 
 Quanta água falta no solo para ele voltar à capacidade de campo, em milímetros. Depois de uma boa chuva a depleção é zero. Em um período seco ela cresce dia a dia.
+
+### Entressafra (spin-up)
+
+O período sem lavoura que o sistema calcula antes da safra: do 1º de fevereiro anterior à emergência, com o solo cheio, até a véspera da emergência. Nesses dias não há planta, então os graus-dia não contam e a evaporação é a do solo coberto de palhada, com parâmetros padrão iguais para todos os talhões. O nome técnico, *spin-up*, quer dizer "dar partida": a conta roda pela entressafra só para chegar à emergência com a água do solo calculada. Nos gráficos, a entressafra aparece como uma faixa cinza quando a caixa **Mostrar entressafra** está marcada; na exportação, as linhas vêm com Fase `PRE`. Veja [Água no solo na emergência](#água-no-solo-na-emergência).
 
 ### ERA5-Land
 
@@ -124,7 +135,7 @@ Medida do calor que a planta acumulou desde a emergência. A cada dia soma-se o 
 
 ### Índice do ciclo
 
-Número de 0 a 100% que resume o efeito da falta de água na safra inteira. Cada janela do ciclo gera um fator: 1 quando não faltou água, menor quando faltou, descontado conforme a sensibilidade da janela (o Ky). O índice é o produto dos quatro fatores. Com índice de 83,0%, a estimativa é que a safra renda 83,0% da produtividade potencial. Uma janela que ainda não chegou entra como se não fosse faltar água. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
+Número de 0 a 100% que resume o efeito da falta de água na safra inteira. Cada janela do ciclo gera um fator: 1 quando não faltou água, menor quando faltou, descontado conforme a sensibilidade da janela (o Ky). O índice é o produto dos quatro fatores. Com índice de 57,1%, a estimativa é que a safra renda 57,1% da produtividade potencial. Uma janela que ainda não chegou entra como se não fosse faltar água. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
 
 ### Janelas F1 a F4
 
@@ -148,7 +159,7 @@ A produtividade que a lavoura alcançaria se não faltasse água em nenhum momen
 
 ### Produtividade predita
 
-A produtividade estimada da safra, em sacas por hectare, considerando só o efeito da falta de água. É a produtividade potencial multiplicada pelo [índice do ciclo](#índice-do-ciclo). Com Ym de 65 sc/ha e índice de 83,0%, a produtividade predita é de 54,0 sc/ha. É uma estimativa de apoio, e não uma previsão de colheita: não considera pragas, doenças, fertilidade nem manejo. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
+A produtividade estimada da safra, em sacas por hectare, considerando só o efeito da falta de água. É a produtividade potencial multiplicada pelo [índice do ciclo](#índice-do-ciclo). Com Ym de 65 sc/ha e índice de 57,1%, a produtividade predita é de 37,1 sc/ha. É uma estimativa de apoio, e não uma previsão de colheita: não considera pragas, doenças, fertilidade nem manejo. A fórmula está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
 
 ### Redução potencial de produtividade
 

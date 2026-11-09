@@ -58,7 +58,7 @@ Vincula um talhão, uma cultivar e uma data de emergência para iniciar o rastre
 | `id` | UUID | |
 | `fieldId` | UUID | FK → Field |
 | `cultivarId` | UUID | FK → Cultivar |
-| `emergenceDate` | Date | Data de emergência (início do ciclo) |
+| `emergenceDate` | Date | Data de emergência (início do ciclo da cultura). O balanço hídrico da run começa **antes**, em `preSeasonStart(emergenceDate)` = último 1º de fevereiro ≤ emergência (spin-up de entressafra, §3) |
 | `season` | String | Ex: "2024/25" |
 | `status` | Enum | ACTIVE / COMPLETED / CANCELLED (padrão ACTIVE) |
 | `expectedYield` | Float? | **Produtividade potencial (Ym)** em sc/ha, informada pelo agrônomo; `> 0` e `≤ 250` (`EXPECTED_YIELD_MAX_SC_HA`, teto de sanidade em `create-harvest.dto.ts`) |
@@ -75,6 +75,7 @@ Vincula um talhão, uma cultivar e uma data de emergência para iniciar o rastre
 - `season` no formato `AAAA/AA` com anos consecutivos (`2025/26`); não é cruzada com a data de emergência (a safrinha de fevereiro pertence à safra do ano anterior).
 - `cultivarId` deve ser visível ao usuário (400 `INVALID_CULTIVAR`); `fieldId`, `cultivarId` e `emergenceDate` são imutáveis após a criação.
 - Qualquer transição de status é permitida; apenas a chegada em `ACTIVE` passa pela regra de unicidade.
+- **Cobertura ERA5-Land desde fevereiro**: ao criar a safra, a cobertura da célula verificada (e o backfill enfileirado, se faltar) vai de `preSeasonStart(emergenceDate)` a `hoje − 6` — não da emergência (`docs/msa/era5-etl.md` § Orquestração). A primeira safra de uma célula nova baixa ≈ 8 meses a mais de ERA5; até o backfill terminar, o processamento grava `NEEDS_DATA` com as datas da entressafra em `missingDates`.
 - **`expectedYield` não recalcula runs existentes**: a run grava a Ym vigente no momento do processamento (`MsaRun.expectedYield`) e a produtividade predita faz parte da run. Para refletir uma Ym nova, o técnico reprocessa a safra. Sem Ym, a run grava o índice do ciclo e `predictedYield` fica nulo.
 - Talhão com safras não pode ser excluído (ver módulo de Propriedades); as FKs de `harvests` são `RESTRICT`.
 
@@ -89,11 +90,13 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
 
 **Pré-requisitos no talhão:** `altitudeM` obrigatório (422 `MISSING_FIELD_ALTITUDE`, sem run); `thetaFC`/`thetaWP` opcionais (default 0,28/0,12, registrado no snapshot com `soilDefaults: true`).
 
-**Intervalo processado:** da data de emergência até o menor entre `hoje − 6` (UTC, o lag do ERA5-Land) e o dia em que o GDA acumulado, percorrido sobre dias contíguos desde a emergência, atinge `gdaTotal` (`resolveInterval` usa `dailyGDA` com `tBase` e `tUpper` do snapshot — graus-dia pelo **método de Ometto (1981)**, cinco casos, `algoritmos.md` §1; com T_B o ciclo termina no mesmo dia ou depois do que terminaria pelo residual). Lacunas depois do fim do ciclo não bloqueiam; lacuna dentro do intervalo gera uma run `NEEDS_DATA` com `missingDates`, **sem calcular e sem interpolar**.
+**Intervalo processado (motor 2.2.0):** de `preSeasonStart(emergenceDate)` — o **último 1º de fevereiro ≤ emergência** (`engine/pre-season.ts`) — até o menor entre `hoje − 6` (UTC, o lag do ERA5-Land) e o dia em que o GDA acumulado, percorrido sobre dias contíguos **a partir da emergência** (os dias de entressafra não acumulam GDA), atinge `gdaTotal` (`resolveInterval(from, limit, series, cultivar, emergence)` usa `dailyGDA` com `tBase` e `tUpper` do snapshot — graus-dia pelo **método de Ometto (1981)**, cinco casos, `algoritmos.md` §1; com T_B o ciclo termina no mesmo dia ou depois do que terminaria pelo residual). `dateFrom` da run é o início do spin-up (`preSeasonFrom`). A condição **"emergência dentro do lag"** continua avaliada sobre a **emergência**, não sobre o início do spin-up: se `emergenceDate > hoje − 6`, a run `NEEDS_DATA` com `missingDates = [emergenceDate]` é gravada **antes** de buscar a série (um spin-up completo sem dia de cultura não tem o que processar). Lacunas depois do fim do ciclo não bloqueiam; lacuna em qualquer ponto do intervalo — inclusive na entressafra — gera uma run `NEEDS_DATA` com `missingDates`, **sem calcular e sem interpolar**. **Invariante:** uma run `SUCCEEDED` tem ao menos um dia com `date ≥ emergenceDate`; série resolvida só com dias `PRE` vira `NEEDS_DATA` (emergência em `missingDates`), e por isso `currentPhase` nunca é `PRE`.
 
-**Persistência (reprodutibilidade):** cada execução gera uma run em `msa_runs` com status (`SUCCEEDED` / `FAILED` / `NEEDS_DATA`), intervalo, `cultivarSnapshot` (os 16 parâmetros, `tUpper` possivelmente nulo, + id/nome/cultura como estavam), `soilSnapshot` (θFC, θWP, altitude, `soilDefaults`), `engineVersion` (`ENGINE_VERSION` do motor, semver — `2.1.0` desde a adoção de Ometto; runs `2.0.0` ficam no histórico) e os campos de produtividade: `expectedYield` (Ym da safra no momento), `yieldIndex` (índice do ciclo), `phasesReached` (0–4) e `predictedYield` (nulo sem Ym; todos nulos em `NEEDS_DATA`/`FAILED`). O motor recebe o snapshot, não o registro atual da cultivar. A série diária vai para `msa_daily_results` (uma linha por dia, colunas de `DailyBalanceRow`) e os resumos por janela (sem percentis) para `msa_phase_summaries`. Reprocessar cria uma run nova; o histórico é mantido; `harvests.latestRunId` aponta para a última run `SUCCEEDED`. Mesmos dados + mesmos snapshots ⇒ resultados idênticos (verificado no roteiro `e2e-msa.sh`).
+**Entressafra (spin-up):** `runDailyBalance` recebe `preSeason = { until: emergenceDate, kc: PRE_SEASON_KC, zr: PRE_SEASON_ZR_MODE === 'zrMax' ? zrMax : zrIni }` (`config/pre-season.ts` → `preSeasonConfig()`; padrões 1,0 e `zrMax`, validados em `config/env.ts`) e `initialDepletion 0` (solo na capacidade de campo em 1º de fevereiro). Os dias anteriores à emergência saem com `phase = 'PRE'`, `gda 0`, `gdaAccum 0`, Kc e Zr constantes e a mesma cadeia TAW/RAW/Ks/ET₀/ETc/Dr; no primeiro dia de cultura a depleção é convertida por proporção para a zona radicular inicial (`convertDepletion`, `algoritmos.md` §5). A run grava `preSeasonFrom`, `preSeasonKc`, `preSeasonZr` (m), `emergenceDepletionMm` (Dr convertido no dia da emergência) e `emergenceDepletionPct` (`emergenceDepletionMm / TAW(zrIni) × 100`); emergência em 1º de fevereiro ⇒ sem dias `PRE` e depleção 0. Runs de motor anterior têm os cinco campos nulos (o painel mostra "Esta execução não tem entressafra (motor anterior); reprocesse").
 
-**Predição de produtividade (`algoritmos.md` §6):** `cycleYieldIndex(summaries)` devolve `{ yieldIndex, phasesReached, factors }`, com `yieldIndex = Π_j [1 − Ky_j·(1 − Ks̄_j)]` sobre as janelas com dias e fator 1 nas não alcançadas ("considera o restante do ciclo sem estresse"); `predictedYield = expectedYield × yieldIndex`. `GET /msa` devolve ainda `cultivarChangedSinceRun` (função pura que compara a **união** das chaves de `CultivarParams` do `cultivarSnapshot` e da cultivar atual; chave ausente de um lado conta como `null`) para o aviso do painel. Por isso uma run do motor 2.0.0 — cujo snapshot não tem `tUpper` — acusa divergência e o painel sugere reprocessar; é o comportamento desejado após o deploy de 2.1.0 ("Processar todas as safras ativas" em `/admin`). A predição é um valor único, sem faixa de incerteza.
+**Persistência (reprodutibilidade):** cada execução gera uma run em `msa_runs` com status (`SUCCEEDED` / `FAILED` / `NEEDS_DATA`), intervalo, `cultivarSnapshot` (os 16 parâmetros, `tUpper` possivelmente nulo, + id/nome/cultura como estavam), `soilSnapshot` (θFC, θWP, altitude, `soilDefaults`), `engineVersion` (`ENGINE_VERSION` do motor, semver — `2.2.0` desde a entressafra (2026-11-09); `2.1.0` Ometto e `2.0.0` ficam no histórico), os campos de produtividade: `expectedYield` (Ym da safra no momento), `yieldIndex` (índice do ciclo), `phasesReached` (0–4) e `predictedYield` (nulo sem Ym; todos nulos em `NEEDS_DATA`/`FAILED`), e os campos da entressafra (`preSeasonFrom`, `preSeasonKc`, `preSeasonZr`, `emergenceDepletionMm`, `emergenceDepletionPct` — migration aditiva `add_preseason_water_balance`; nulos em runs < 2.2.0). O motor recebe o snapshot, não o registro atual da cultivar. A série diária vai para `msa_daily_results` (uma linha por dia, **inclusive os dias `PRE` da entressafra**, colunas de `DailyBalanceRow`; a coluna `phase` é texto) e os resumos por janela (sem percentis) para `msa_phase_summaries`. Reprocessar cria uma run nova; o histórico é mantido; `harvests.latestRunId` aponta para a última run `SUCCEEDED`. Mesmos dados + mesmos snapshots ⇒ resultados idênticos (verificado no roteiro `e2e-msa.sh`).
+
+**Predição de produtividade (`algoritmos.md` §6):** `cycleYieldIndex(summaries)` devolve `{ yieldIndex, phasesReached, factors }`, com `yieldIndex = Π_j [1 − Ky_j·(1 − Ks̄_j)]` sobre as janelas com dias e fator 1 nas não alcançadas ("considera o restante do ciclo sem estresse"); `predictedYield = expectedYield × yieldIndex`. `GET /msa` devolve ainda `cultivarChangedSinceRun` (função pura que compara a **união** das chaves de `CultivarParams` do `cultivarSnapshot` e da cultivar atual; chave ausente de um lado conta como `null`) para o aviso do painel. Por isso uma run do motor 2.0.0 — cujo snapshot não tem `tUpper` — acusa divergência e o painel sugere reprocessar; é o comportamento desejado após o deploy de 2.1.0 ("Processar todas as safras ativas" em `/admin`). Após o deploy de 2.2.0, as runs antigas continuam válidas, mas sem entressafra: o painel sugere reprocessar e as safras cujo talhão não tem ERA5 desde fevereiro ficam `NEEDS_DATA` até o backfill (README raiz, nota pós-deploy). A predição é um valor único, sem faixa de incerteza.
 
 ---
 
@@ -105,12 +108,13 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
          → pai `msa-weekly:run` só executa se o filho concluiu
 3. Pai enfileira `msa-process {harvestId, reason: WEEKLY}` por safra ACTIVE (jobId weekly_<data>_<id>)
 4. Worker Node (concorrência 4), para cada job:
-   a. Busca a série diária da célula do talhão (Tmax, Tmin, Tdew, u2, Rn, P)
-   b. GDA do dia (Ometto: Tb/TB) e acumulado → janela fenológica (F1/F2/F3/F4) e fim do ciclo
+   a. Busca a série diária da célula do talhão (Tmax, Tmin, Tdew, u2, Rn, P) desde o último 1º de fevereiro ≤ emergência
+   a'. Entressafra (dias PRE, até a véspera da emergência): sem cultura, Kc/Zr constantes (PRE_SEASON_*), solo cheio em fevereiro → depleção na emergência (convertida para zrIni)
+   b. GDA do dia (Ometto: Tb/TB) e acumulado desde a emergência → janela fenológica (F1/F2/F3/F4) e fim do ciclo
    c. ET₀ diária (FAO-56) → ETc = Kc(GDA) × ET₀
    d. Balanço hídrico diário → Dr, Ks, ETc_adj; resumo por janela (Ks médio, Ky·(1−Ks̄))
    e. Índice do ciclo = Π das janelas alcançadas → produtividade predita = Ym × índice (sc/ha)
-   f. Persiste run (reason, jobId, snapshots, Ym, índice, phasesReached, predita), série diária e resumos
+   f. Persiste run (reason, jobId, snapshots, Ym, índice, phasesReached, predita, preSeason*, emergenceDepletion*), série diária (PRE + cultura) e resumos
 5. Mesmo caminho para `reason: BACKFILL` (criação de safra) e `reason: MANUAL` (endpoint / process-all)
 6. Pendente: notificação ao técnico quando alguma janela apresenta Ks_médio < 0,85
 ```
@@ -139,9 +143,9 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
 | `id` | UUID | |
 | `harvestId` | UUID | FK → Harvest |
 | `date` | Date | Data do cálculo |
-| `phenoPhase` | Enum | F1 / F2 / F3 / F4 |
-| `gda` | Decimal | GDA do dia (°C·dia) |
-| `gdaAccum` | Decimal | GDA acumulado desde emergência |
+| `phenoPhase` | Texto | F1 / F2 / F3 / F4 / COMPLETED, ou **PRE** nos dias da entressafra (anteriores à emergência; `GET /msa/daily` só os devolve com `includePreSeason=true`) |
+| `gda` | Decimal | GDA do dia (°C·dia); 0 nos dias PRE |
+| `gdaAccum` | Decimal | GDA acumulado desde emergência; 0 nos dias PRE |
 | `et0` | Decimal | mm/dia |
 | `kc` | Decimal | Coeficiente de cultura do dia |
 | `etcStandard` | Decimal | ETc padrão (mm/dia) |
@@ -171,6 +175,18 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
 | `phasesReached` | Int? | Janelas com dias (0–4); < 4 ⇒ predição parcial |
 | `predictedYield` | Float? | Ym × índice (sc/ha); nulo sem Ym |
 
+### msa_runs (campos da entressafra — motor 2.2.0, migration aditiva `add_preseason_water_balance`)
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `preSeasonFrom` | Date? | Início do spin-up = `preSeasonStart(emergenceDate)` (último 1º de fevereiro ≤ emergência); igual a `dateFrom` |
+| `preSeasonKc` | Float? | Kc constante usado nos dias PRE (snapshot de `PRE_SEASON_KC`) |
+| `preSeasonZr` | Float? | Zr (m) usado nos dias PRE (`zrMax` ou `zrIni` da cultivar, conforme `PRE_SEASON_ZR_MODE`) |
+| `emergenceDepletionMm` | Float? | Depleção na emergência, já convertida para a zona radicular inicial (mm); 0 sem dias PRE |
+| `emergenceDepletionPct` | Float? | `emergenceDepletionMm / TAW(zrIni) × 100` (0–100); o painel mostra 100 − pct como "água disponível" |
+
+> Os cinco campos são nulos em runs de motor anterior a 2.2.0 e em `NEEDS_DATA`/`FAILED`.
+
 > A tabela `msa_decisions` e as colunas `seed`, `iterations`, `sigma_*`, `valid_iterations` e `*_p10/p50/p90` foram removidas pela migration `refocus_yield_prediction` (destrutiva: runs anteriores são descartadas — após o deploy, "Processar todas as safras ativas" em `/admin`).
 
 ---
@@ -188,8 +204,8 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | PATCH | `/api/v1/harvests/:id` | `status`, `notes`, `season`, `expectedYield` (não recalcula runs) | AGRONOMO, ADMIN |
 | POST | `/api/v1/harvests/:id/msa/process` | Enfileira o (re)processamento: **202** `{ jobId, queue, status: "queued" }`; 404 fora do escopo | AGRONOMO, ADMIN |
 | POST | `/api/v1/harvests/:id/msa/process?sync=true` | Processa inline: 201 run `SUCCEEDED` com resumos; 200 run `NEEDS_DATA` com `missingDates`; 422 `MISSING_FIELD_ALTITUDE`; 500 `MSA_PROCESSING_FAILED` (run `FAILED` gravada); 403 `SYNC_ADMIN_ONLY` para não-ADMIN | ADMIN |
-| GET | `/api/v1/harvests/:id/msa` | Última run `SUCCEEDED`: metadados, snapshots, `expectedYield`/`yieldIndex`/`predictedYield`/`phasesReached`, 4 janelas (sem percentis), `currentPhase`, `cultivarChangedSinceRun`; 404 `NO_MSA_RESULT` | Todos |
-| GET | `/api/v1/harvests/:id/msa/daily?runId=` | Série diária da run (padrão: última) | Todos |
+| GET | `/api/v1/harvests/:id/msa` | Última run `SUCCEEDED`: metadados, snapshots, `expectedYield`/`yieldIndex`/`predictedYield`/`phasesReached`, `preSeasonFrom`/`preSeasonKc`/`preSeasonZr`/`emergenceDepletionMm`/`emergenceDepletionPct` (nulos em runs < 2.2.0), 4 janelas (sem percentis), `currentPhase` (nunca `PRE`), `cultivarChangedSinceRun`; 404 `NO_MSA_RESULT` | Todos |
+| GET | `/api/v1/harvests/:id/msa/daily?runId=&includePreSeason=` | Série diária da run (padrão: última). `includePreSeason=false` (padrão) devolve só os dias de cultura, da emergência a `dateTo`; `true` inclui os dias `PRE` desde `dateFrom`; outro valor → 400 identificando `includePreSeason` | Todos |
 | GET | `/api/v1/harvests/:id/msa/runs` | Histórico de runs (sem séries), mais recente primeiro | Todos |
 | GET | `/api/v1/admin/jobs/queues` | Contagens por fila (`waiting`, `active`, `completed`, `failed`, `delayed`, `waiting-children`) e `weekly.nextRun` | ADMIN |
 | GET | `/api/v1/admin/jobs/:queue/:id` | Estado, `progress`, `attemptsMade`, `failedReason`, `returnvalue`, timestamps; 404 se não existe | ADMIN |
@@ -205,7 +221,8 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | `src/modules/msa/msa.repository.ts` | Runs, série diária, resumos (Prisma) |
 | `src/modules/msa/msa.routes.ts` · `msa.controller.ts` · `dtos/` | Rotas sob `/harvests/:id/msa` |
 | `src/modules/msa/era5.repository.ts` | Série diária do talhão no formato do motor; cobertura |
-| `src/modules/msa/engine/` | Motor puro: GDA (Ometto, `gda.ts`), fenologia, ET₀, Kc, balanço, FAO-33 (`yield.ts`: redução por janela, índice do ciclo, produtividade predita) — `ENGINE_VERSION` 2.1.0 |
+| `src/modules/msa/engine/` | Motor puro: GDA (Ometto, `gda.ts`), fenologia, ET₀, Kc, balanço com entressafra (`water-balance.ts`, `pre-season.ts`: `preSeasonStart`, `convertDepletion`), FAO-33 (`yield.ts`: redução por janela, índice do ciclo, produtividade predita) — `ENGINE_VERSION` 2.2.0 |
+| `src/config/pre-season.ts` · `env.ts` | `PRE_SEASON_KC` (padrão 1,0; (0, 1,5]) e `PRE_SEASON_ZR_MODE` (`zrMax` \| `zrIni`) → `preSeasonConfig()`; gravados em cada run |
 | `src/modules/jobs/flows.ts` · `jobs.service.ts` | Filas, payloads, flows (semanal, backfill), `planHarvestJobs`, ids determinísticos; enfileiramento e consulta |
 | `src/modules/jobs/jobs.routes.ts` · `jobs.controller.ts` | `/api/v1/admin/jobs` (ADMIN) |
 | `src/worker.ts` | Processo `worker`: consumidores `msa-process` (×4) e `msa-weekly`, scheduler semanal, shutdown gracioso |
@@ -214,6 +231,7 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | `backend/scripts/e2e/e2e-msa.sh` · `e2e-orchestration.sh` | Roteiros de ponta a ponta do processamento (inline) e da orquestração (filas) |
 | `src/modules/cultivars/` | Cultivares: 16 parâmetros (`tUpper` anulável), referência (`GET /reference`), `referenceSnapshot`, `sync-reference`, edição em uso |
 | `scripts/validation/gda-validate.ts` | `pnpm msa:validate-gda` — Caso 5 de `validacao.md`: residual × Ometto × Ometto com TB |
+| `scripts/validation/preseason-validate.ts` | `pnpm msa:validate-preseason` — complemento do Caso 2: depleção na emergência por Kc da entressafra (0,4 / 0,7 / 1,0), `--zr-mode`, CSV |
 | `docs/msa/algoritmos.md` | Fórmulas matemáticas completas |
 | `docs/msa/era5-etl.md` | Pipeline de ingestão e correção |
 | `docs/msa/validacao.md` | Protocolo de validação científica |

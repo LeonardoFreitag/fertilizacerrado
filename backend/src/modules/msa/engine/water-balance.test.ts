@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { referenceET0 } from './et0';
+import { kcForPhase } from './kc';
 import { LATOSSOLO, SOJA } from './test-fixtures';
 import type { CultivarParams, DailyWeather } from './types';
 import {
@@ -147,5 +148,80 @@ describe('runDailyBalance (FAO-56 cap. 8; algoritmos.md §5)', () => {
 
   it('série vazia devolve série vazia', () => {
     expect(runDailyBalance([], SOJA, LATOSSOLO, { altitude: ALTITUDE })).toEqual([]);
+  });
+});
+
+describe('entressafra (spin-up) — preSeason', () => {
+  const TAW_PRE = totalAvailableWater(LATOSSOLO.thetaFC, LATOSSOLO.thetaWP, 0.95); // 152
+  const TAW_INI = totalAvailableWater(LATOSSOLO.thetaFC, LATOSSOLO.thetaWP, SOJA.zrIni); // 48
+  /** ET₀ ≈ 5 mm/dia: dia quente e seco com Rn alto. */
+  const hot = (i: number, precipitation = 0): DailyWeather => day(i, precipitation, { tmax: 34, tmin: 20, tdew: 10, u2: 3, rn: 18 });
+  const until = day(10).date; // emergência no 11º dia
+
+  it('dez dias secos: fase PRE, gda 0, Zr/Kc da entressafra; Dr cresce ~ETc até RAW e menos depois', () => {
+    const days = [...Array.from({ length: 10 }, (_, i) => hot(i)), ...Array.from({ length: 5 }, (_, i) => hot(10 + i))];
+    const rows = runDailyBalance(days, SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: { until, kc: 1, zr: 0.95 } });
+    const pre = rows.slice(0, 10);
+    expect(pre.every((r) => r.phase === 'PRE' && r.gda === 0 && r.gdaAccum === 0 && r.zr === 0.95 && r.kc === 1)).toBe(true);
+    expect(pre[0]!.taw).toBeCloseTo(TAW_PRE, 9);
+    expect(pre[0]!.et0).toBeGreaterThan(4); // dia quente e seco: ET₀ alta, ETc = Kc·ET₀ com Kc 1
+    let prev = 0;
+    for (const r of pre) {
+      const inc = r.dr - prev;
+      if (prev <= r.raw) expect(inc).toBeCloseTo(r.etc, 9); // sem estresse: Dr sobe exatamente ETc
+      else expect(inc).toBeLessThan(r.etc);
+      prev = r.dr;
+    }
+    expect(rows[10]!.phase).toBe('F1');
+    expect(rows[10]!.gdaAccum).toBeGreaterThan(0);
+  });
+
+  it('chuva de 80 mm no último dia PRE (Dr abaixo de 80) zera Dr e a depleção na emergência é 0', () => {
+    const until6 = day(6).date;
+    const days = [...Array.from({ length: 6 }, (_, i) => hot(i, i === 5 ? 80 : 0)), hot(6), hot(7)];
+    const rows = runDailyBalance(days, SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: { until: until6, kc: 1, zr: 0.95 } });
+    expect(rows[4]!.dr).toBeLessThan(80);
+    expect(rows[5]!.dr).toBe(0);
+    expect(rows[6]!.ks).toBe(1);
+    // sem depleção inicial, o primeiro dia de cultura equivale a uma série que começa nele
+    const fresh = runDailyBalance([hot(6), hot(7)], SOJA, LATOSSOLO, { altitude: ALTITUDE });
+    expect(rows[6]!.dr).toBeCloseTo(fresh[0]!.dr, 9);
+  });
+
+  it('conversão na emergência: Dr_pre 120 sobre 152 → 37,9 sobre 48 (79 %)', () => {
+    // 1 dia PRE com depleção inicial 120 e chuva igual à ETc para manter Dr em 120
+    const probe = runDailyBalance([hot(0)], SOJA, LATOSSOLO, { altitude: ALTITUDE, initialDepletion: 120, preSeason: { until: day(1).date, kc: 1, zr: 0.95 } });
+    const etcPre = probe[0]!.etcAdj;
+    const days = [hot(0, etcPre), hot(1)];
+    const rows = runDailyBalance(days, SOJA, LATOSSOLO, { altitude: ALTITUDE, initialDepletion: 120, preSeason: { until: day(1).date, kc: 1, zr: 0.95 } });
+    expect(rows[0]!.dr).toBeCloseTo(120, 6);
+    // dia da emergência: Ks calculado com a depleção convertida (37,9 sobre TAW ≈ 48)
+    const drIni = 120 * (TAW_INI / TAW_PRE);
+    expect(drIni).toBeCloseTo(37.9, 1);
+    const expectedKs = stressCoefficient(drIni, rows[1]!.taw, rows[1]!.raw);
+    expect(rows[1]!.ks).toBeCloseTo(expectedKs, 9);
+    expect(rows[1]!.phase).toBe('F1');
+    expect(rows[1]!.dr).toBeCloseTo(Math.min(rows[1]!.taw, drIni + rows[1]!.etcAdj), 9);
+  });
+
+  it('spin-up vazio (until ≤ primeira data) ≡ sem preSeason', () => {
+    const days = series(20, (i) => (i % 5 === 0 ? 12 : 0));
+    const a = runDailyBalance(days, SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: { until: days[0]!.date, kc: 1, zr: 0.95 } });
+    const b = runDailyBalance(days, SOJA, LATOSSOLO, { altitude: ALTITUDE });
+    expect(a).toEqual(b);
+    expect(a.some((r) => r.phase === 'PRE')).toBe(false);
+  });
+
+  it('determinístico e sem alocação extra: duas execuções idênticas', () => {
+    const days = [...Array.from({ length: 30 }, (_, i) => hot(i, i % 7 === 0 ? 20 : 0)), ...series(10)];
+    const p = { until: day(30).date, kc: 1, zr: 0.95 };
+    expect(runDailyBalance(days, SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: p })).toEqual(runDailyBalance(days, SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: p }));
+  });
+
+  it('rejeita preSeason inválido e kcForPhase(PRE)', () => {
+    expect(() => runDailyBalance(series(3), SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: { until, kc: 0, zr: 0.95 } })).toThrow(RangeError);
+    expect(() => runDailyBalance(series(3), SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: { until, kc: 1, zr: 0 } })).toThrow(RangeError);
+    expect(() => runDailyBalance(series(3), SOJA, LATOSSOLO, { altitude: ALTITUDE, preSeason: { until: '10/11/2025', kc: 1, zr: 0.95 } })).toThrow(RangeError);
+    expect(() => kcForPhase('PRE' as never, 0, SOJA)).toThrow(RangeError);
   });
 });

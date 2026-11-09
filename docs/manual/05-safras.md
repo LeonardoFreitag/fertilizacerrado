@@ -51,12 +51,12 @@ Ao cadastrar, o sistema abre a página da safra e começa a trabalhar sozinho. A
 
 ![Página da safra durante o processamento, com a faixa em destaque](img/05-03-processando.png)
 
-Nesse momento o sistema busca os dados de clima do talhão, da emergência até os dias mais recentes disponíveis, e faz os cálculos. Você não precisa ficar na tela. Pode sair e voltar depois.
+Nesse momento o sistema busca os dados de clima do talhão, desde o 1º de fevereiro anterior à emergência até os dias mais recentes disponíveis, e faz os cálculos. Você não precisa ficar na tela. Pode sair e voltar depois. Por que fevereiro, e não a emergência, está explicado [logo abaixo](#por-que-a-safra-começa-em-fevereiro).
 
 O tempo varia:
 
 - **alguns segundos**, quando os dados de clima daquela região já estão no sistema;
-- **vários minutos**, na primeira safra de uma região nova, porque os dados precisam ser baixados.
+- **vários minutos**, na primeira safra de uma região nova, porque os dados precisam ser baixados — e são quase um ano de dados, porque a conta começa em fevereiro.
 
 O botão **Parar de aguardar** só fecha a faixa. O processamento continua.
 
@@ -65,6 +65,18 @@ Quando termina, a faixa dá lugar ao painel.
 ![Página da safra com o painel carregado após o processamento](img/05-04-processamento-concluido.png)
 
 A leitura do painel está no [capítulo 6](06-painel-agrometeorologico.md). Se em vez do painel aparecer **Sem processamento do MSA**, veja [o que fazer](06-painel-agrometeorologico.md#quando-aparece-sem-processamento-do-msa).
+
+### Por que a safra "começa" em fevereiro
+
+A lavoura nasce em outubro ou novembro, mas o solo não começa do zero nesse dia. Ele vem de meses de seca, e a água que ainda guarda depende da chuva que caiu, e da que deixou de cair, desde o fim da safra anterior.
+
+Por isso o sistema não parte do pressuposto de que o solo estava cheio no dia da emergência. Ele faz a conta da água no solo desde o **1º de fevereiro anterior à emergência**, quando o solo costuma estar cheio pelas chuvas de verão, e acompanha dia a dia, pela entressafra, quanto o sol e o vento secaram e quanto a chuva repôs. Quando chega à data da emergência, já sabe com quanta água o talhão entrou na safra. Esse número aparece no painel, no cartão **Água no solo na emergência**, explicado no [capítulo 6](06-painel-agrometeorologico.md#água-no-solo-na-emergência).
+
+Nada muda no cadastro: você continua informando só a data da emergência. O que muda no acompanhamento:
+
+- **O primeiro processamento pode precisar de mais dados de clima.** Se a região do talhão ainda não tem os dados desde fevereiro, o sistema os baixa antes de calcular. Enquanto isso, a página mostra **Sem processamento do MSA** com o aviso **Faltam dados…** e a lista dos dias que faltam, agrupada por mês (por exemplo, **fev/2025: 28 dias; mar/2025: 31 dias; …**). Clique em **ver todas as datas** para a lista completa. Quando o download termina, o sistema processa a safra sozinho.
+- **O intervalo processado começa em fevereiro.** No cabeçalho do painel, a primeira data é o 1º de fevereiro, e não a emergência. As janelas F1 a F4, os cartões e a produtividade continuam contando a partir da emergência.
+- **Os gráficos começam na emergência**, como antes. Se quiser ver a entressafra, marque **Mostrar entressafra** acima deles ([capítulo 6](06-painel-agrometeorologico.md#ver-a-entressafra-nos-gráficos)).
 
 ### Atualização semanal
 

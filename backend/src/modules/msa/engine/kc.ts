@@ -5,7 +5,7 @@
  * Tabela 12) com a interpolação linear dos trechos de desenvolvimento e final
  * feita em GDA, não em dias; `docs/msa/algoritmos.md` §4.
  */
-import type { CultivarParams, Phase } from './types';
+import type { CropPhase, CultivarParams } from './types';
 
 function lerp(from: number, to: number, fraction: number): number {
   const t = fraction < 0 ? 0 : fraction > 1 ? 1 : fraction;
@@ -15,10 +15,11 @@ function lerp(from: number, to: number, fraction: number): number {
 /**
  * Kc do dia: F1 = Kc_ini; F2 = linear Kc_ini → Kc_mid em [gdaF1End, gdaF2End];
  * F3 = Kc_mid; F4 = linear Kc_mid → Kc_end em [gdaF3End, gdaTotal];
- * COMPLETED = Kc_end. Contínuo nas quatro transições.
+ * COMPLETED = Kc_end. Contínuo nas quatro transições. Não vale para `PRE`: o Kc
+ * da entressafra não é propriedade da cultivar (ver `PreSeasonOptions`).
  * FAO-56 cap. 6, Fig. 25 (curva Kc); `docs/msa/algoritmos.md` §4.
  */
-export function kcForPhase(phase: Phase, gdaAccum: number, cultivar: CultivarParams): number {
+export function kcForPhase(phase: CropPhase, gdaAccum: number, cultivar: CultivarParams): number {
   switch (phase) {
     case 'F1':
       return cultivar.kcIni;
@@ -38,5 +39,7 @@ export function kcForPhase(phase: Phase, gdaAccum: number, cultivar: CultivarPar
       );
     case 'COMPLETED':
       return cultivar.kcEnd;
+    default:
+      throw new RangeError(`kcForPhase não se aplica à fase ${String(phase)}`);
   }
 }

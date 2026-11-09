@@ -132,6 +132,27 @@ test('safra com Ym → processamento → painel com produtividade predita → Ym
   await expect(page.getByTestId('yield-ym-changed')).toHaveCount(0);
   const predicted = (await page.getByTestId('yield-predicted').textContent()) ?? '';
   expect(Number(predicted.replace(' sc/ha', '').replace(',', '.'))).toBeLessThanOrEqual(65);
+  // água no solo na emergência (spin-up desde 1º de fevereiro) e alternador da entressafra
+  await expect(page.getByTestId('soil-water-card')).toBeVisible();
+  await expect(page.getByTestId('soil-water-headline')).toContainText(/entrou na safra com \d+ % da água disponível/);
+  await expect(page.getByTestId('soil-water-rain')).toContainText('mm', { timeout: 15_000 });
+  await expect(page.getByText('Entressafra', { exact: true })).toHaveCount(0); // faixa cinza só com o alternador ligado
+  const toggle = page.getByTestId('toggle-preseason');
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await expect(page.getByTestId('msa-charts').getByText('Entressafra', { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByLabel('Linha do tempo fenológica')).toContainText('ciclo encerrado'); // linha do tempo continua na cultura
+  // CSV da série diária com a entressafra (Fase PRE)
+  const [withPre] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Exportar série diária' }).click()]);
+  const preStream = await withPre.createReadStream();
+  const preChunks: Buffer[] = [];
+  for await (const c of preStream) preChunks.push(Buffer.from(c));
+  const preCsv = Buffer.concat(preChunks).toString('utf8');
+  expect(preCsv).toMatch(/;PRE;/);
+  await toggle.uncheck();
+  await expect(page.getByTestId('msa-charts').getByText('Entressafra', { exact: true })).toHaveCount(0);
+
   // sem semente, percentis ou cenários no painel
   await expect(page.getByText('Semente')).toHaveCount(0);
   await expect(page.getByText(/P10|P50|P90/)).toHaveCount(0);
@@ -166,6 +187,7 @@ test('safra com Ym → processamento → painel com produtividade predita → Ym
   expect(csv.charCodeAt(0)).toBe(0xfeff);
   expect(csv.split('\r\n')[0]).toContain('Data;Fase;GDA do dia');
   expect(csv).toMatch(/;0,\d+;/); // vírgula decimal
+  expect(csv).not.toMatch(/;PRE;/); // alternador desligado: só a cultura
 
   // histórico de runs lista a run BACKFILL com índice e predita, sem semente
   await expect(page.getByLabel('Histórico de runs')).toContainText('Criação da safra');
@@ -216,6 +238,12 @@ test('admin: process-all mostra jobId e estado', async ({ page }) => {
   const adminPassword = get('ADMIN_PASSWORD');
   test.skip(!adminEmail || !adminPassword, 'ADMIN_EMAIL/ADMIN_PASSWORD ausentes no .env');
 
+  // O teste garante o próprio estado: safras ativas em talhões sem altitude (resíduo dos roteiros
+  // bash) fariam o processamento falhar com MISSING_FIELD_ALTITUDE; são canceladas antes de enfileirar.
+  compose(
+    `exec -T db sh -c "psql -q -U \\$POSTGRES_USER -d \\$POSTGRES_DB -c \\"UPDATE harvests SET status = 'CANCELLED' WHERE status = 'ACTIVE' AND field_id IN (SELECT id FROM fields WHERE altitude_m IS NULL)\\""`,
+  );
+
   await login(page, adminEmail!, adminPassword!);
   await page.getByRole('link', { name: 'Admin', exact: true }).click(); // o nome do admin no cabeçalho também é link
   await expect(page.getByRole('heading', { name: 'Administração' })).toBeVisible();
@@ -224,5 +252,5 @@ test('admin: process-all mostra jobId e estado', async ({ page }) => {
   await page.getByRole('button', { name: 'Enfileirar', exact: true }).click();
   await expect(page.getByText(/job\(s\) enfileirado\(s\)|enfileirado em/)).toBeVisible();
   await expect(page.getByTestId('session-job').first()).toBeVisible();
-  await expect(page.getByTestId('session-job').first()).toContainText(/completed|active|waiting/, { timeout: 60_000 });
+  await expect(page.getByTestId('session-job').first()).toContainText(/completed/, { timeout: 60_000 });
 });

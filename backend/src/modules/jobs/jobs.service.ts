@@ -8,6 +8,7 @@ import type { Job, JobState } from 'bullmq';
 import { prisma } from '../../config/database';
 import { getFlowProducer, getQueue, QUEUES, QUEUE_NAMES, type QueueName } from '../../config/queue';
 import { era5Repository } from '../msa/era5.repository';
+import { preSeasonStart } from '../msa/engine';
 import {
   DATA_LAG_DAYS,
   INGEST_JOB_OPTS,
@@ -90,10 +91,13 @@ export const jobsService = {
    */
   async scheduleHarvestProcessing(harvest: { id: string; fieldId: string; emergenceDate: Date }): Promise<string | null> {
     try {
-      const from = harvest.emergenceDate.toISOString().slice(0, 10);
+      // Cobertura e backfill desde o início do spin-up (último 1º de fevereiro);
+      // a condição "emergência dentro do lag" continua sobre a emergência.
+      const emergence = harvest.emergenceDate.toISOString().slice(0, 10);
+      const from = preSeasonStart(emergence);
       const limit = dateUtc(-DATA_LAG_DAYS);
-      const coverage = from > limit ? null : await era5Repository.getCoverage(harvest.fieldId, from, limit);
-      const plan = planHarvestJobs(coverage, from, limit);
+      const coverage = emergence > limit ? null : await era5Repository.getCoverage(harvest.fieldId, from, limit);
+      const plan = planHarvestJobs(coverage, emergence, limit);
 
       if (plan === 'backfill') {
         const cell = await prisma.era5Cell.findUnique({ where: { fieldId: harvest.fieldId } });

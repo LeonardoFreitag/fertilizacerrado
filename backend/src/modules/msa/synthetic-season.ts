@@ -52,15 +52,22 @@ function clamp(v: number, min: number, max: number): number {
  * sazonalidade suave e ruído; chuva em regime de verão com veranicos (blocos
  * secos de 7–15 dias) para que haja estresse hídrico em F2/F3.
  */
-export function syntheticSeason(days: number, seed: number): DailyWeather[] {
+export function syntheticSeason(days: number, seed: number, start: string = SYNTHETIC_SEASON_START): DailyWeather[] {
   if (!Number.isInteger(days) || days < 1) throw new RangeError(`days deve ser inteiro ≥ 1: ${days}`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) throw new RangeError(`start deve ser AAAA-MM-DD: ${start}`);
   const rand = mulberry32(seed);
-  const start = new Date(`${SYNTHETIC_SEASON_START}T00:00:00Z`).getTime();
+  const startMs = new Date(`${start}T00:00:00Z`).getTime();
+  // Deslocamento sazonal em relação a 1º de novembro (padrão): mantém a saída
+  // atual para o início padrão e dá estação seca (maio–setembro) a séries longas.
+  const dayOffset = Math.round((startMs - new Date(`${SYNTHETIC_SEASON_START}T00:00:00Z`).getTime()) / 86_400_000);
   const out = new Array<DailyWeather>(days);
 
   let drySpellLeft = 0;
   for (let i = 0; i < days; i++) {
-    const season = Math.sin((2 * Math.PI * (i + 305)) / 365); // pico de verão por volta de janeiro
+    const t = i + dayOffset; // dias desde 1º de novembro de 2025
+    const season = Math.sin((2 * Math.PI * (t + 305)) / 365); // pico de verão por volta de janeiro
+    const month = new Date(startMs + i * 86_400_000).getUTCMonth() + 1;
+    const drySeason = start !== SYNTHETIC_SEASON_START && month >= 5 && month <= 9; // Cerrado: seca de maio a setembro
     const tmax = clamp(31 + 1.5 * season + sampleNormal(rand, 0, 1.5), 22, 40);
     const tmin = clamp(tmax - (9 + sampleNormal(rand, 0, 1.2)), 10, tmax - 4);
     const tdew = tmin - uniform(rand, 0, 3);
@@ -77,9 +84,10 @@ export function syntheticSeason(days: number, seed: number): DailyWeather[] {
     } else if (rand() < 0.45) {
       precipitation = uniform(rand, 1, 35);
     }
+    if (drySeason) precipitation = 0;
 
     out[i] = {
-      date: new Date(start + i * 86_400_000).toISOString().slice(0, 10),
+      date: new Date(startMs + i * 86_400_000).toISOString().slice(0, 10),
       tmax,
       tmin,
       tdew,

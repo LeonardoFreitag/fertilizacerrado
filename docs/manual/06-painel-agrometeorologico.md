@@ -11,7 +11,7 @@ O painel aparece na página de cada safra. Nas telas ele se chama **Módulo agro
 
 A lavoura precisa de água todos os dias. A quantidade depende do clima e do tamanho da planta. O solo funciona como uma caixa-d'água: a chuva enche, a lavoura esvazia.
 
-Para cada dia da safra, o sistema faz esta conta:
+A conta começa antes da safra: desde o 1º de fevereiro anterior à emergência, com o solo cheio pelas chuvas de verão, o sistema acompanha a água do solo pela entressafra, para saber com quanta água o talhão entrou na safra (veja [Água no solo na emergência](#água-no-solo-na-emergência)). Depois, para cada dia da safra, o sistema faz esta conta:
 
 1. Calcula quanta água a lavoura precisaria naquele dia.
 2. Soma a chuva e desconta o consumo, para saber quanta água sobrou no solo.
@@ -95,7 +95,7 @@ A cor do cartão vem do **Ks médio** da janela:
 | Vermelho | **crítico** | abaixo de 0,70 | Falta de água severa |
 | Cinza | **não alcançada** | — | A lavoura ainda não chegou a essa janela |
 
-No exemplo, os quatro cartões estão verdes: F1 e F2 com Ks 1,00, F3 com Ks 0,86 — logo acima do limite de 0,85, ou seja, quase em **atenção** — e F4 com Ks 0,92<!-- valor:phases.F4.ksMean|2 -->.
+No exemplo, dois cartões estão vermelhos e dois verdes: F1 com Ks 0,60 (**crítico** — o talhão entrou na safra com pouca água no solo, veja o cartão [Água no solo na emergência](#água-no-solo-na-emergência)), F2 com Ks 0,93 (**ok**), F3 com Ks 0,69 (**crítico**, um veranico na floração) e F4 com Ks 0,89<!-- valor:phases.F4.ksMean|2 --> (**ok**).
 
 ### Como ler um cartão
 
@@ -103,11 +103,11 @@ No exemplo, os quatro cartões estão verdes: F1 e F2 com Ks 1,00, F3 com Ks 0,8
 
 O cartão de F3, floração e enchimento, mostra:
 
-- **Ks médio: 0,86<!-- valor:phases.F3.ksMean|2 -->.** Na média dos 29<!-- valor:phases.F3.days|0 --> dias da janela, a lavoura usou 86% da água de que precisava. O valor fica logo acima de 0,85, por isso o cartão ainda está **ok**; um pouco menos de chuva e ele passaria a **atenção**.
+- **Ks médio: 0,69<!-- valor:phases.F3.ksMean|2 -->.** Na média dos 29<!-- valor:phases.F3.days|0 --> dias da janela, a lavoura usou 69% da água de que precisava. O valor fica abaixo de 0,70, por isso o cartão está em **crítico**.
 
-- **Redução potencial de produtividade: 14,1<!-- valor:phases.F3.yieldReductionPct|1 -->%.** É a estimativa de quanto da produtividade pode ter sido perdida nessa janela só pela falta de água. Ela combina o Ks médio com a sensibilidade da janela, o [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse).
+- **Redução potencial de produtividade: 31,2<!-- valor:phases.F3.yieldReductionPct|1 -->%.** É a estimativa de quanto da produtividade pode ter sido perdida nessa janela só pela falta de água. Ela combina o Ks médio com a sensibilidade da janela, o [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse).
 
-- **ETc ajustada acumulada: 141,3<!-- valor:phases.F3.etcAdjAccum|1 --> mm.** A água que a lavoura realmente usou na janela.
+- **ETc ajustada acumulada: 113,4<!-- valor:phases.F3.etcAdjAccum|1 --> mm.** A água que a lavoura realmente usou na janela.
 
 - **Chuva acumulada: 124,4<!-- valor:phases.F3.precipAccum|1 --> mm.** O total de chuva da janela. Compare com o seu pluviômetro.
 
@@ -117,7 +117,7 @@ Os termos estão no glossário: [redução potencial de produtividade](08-pergun
 
 ### Por que a mesma falta de água pesa diferente
 
-Compare F3 e F4 no exemplo. O Ks de F4 é 0,92, não muito acima do de F3. Mas a redução estimada em F4 é de 3,3<!-- valor:phases.F4.yieldReductionPct|1 -->%, contra 14,1% em F3.
+Compare F1 e F3 no exemplo. Os dois cartões estão em crítico, com Ks médio parecido (0,60 e 0,69). Mas a redução estimada em F1 é de 7,9%, e em F3 chega a 31,2%. Já F4, com Ks 0,89, perde só 4,2<!-- valor:phases.F4.yieldReductionPct|1 -->%.
 
 A diferença está na sensibilidade da planta. Na floração e no enchimento de grãos a soja é muito mais sensível à falta de água que na maturação. O sistema leva isso em conta por meio do [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse) de cada janela.
 
@@ -139,18 +139,18 @@ No exemplo:
 
 | Janela | Ks médio | Redução | Fator |
 |---|---|---|---|
-| F1 | 1,00 | 0,0% | 1,000 |
-| F2 | 1,00 | 0,0% | 1,000 |
-| F3 | 0,86 | 14,1% | 0,859 |
-| F4 | 0,92 | 3,3% | 0,967 |
+| F1 | 0,60 | 7,9% | 0,921 |
+| F2 | 0,93 | 5,9% | 0,941 |
+| F3 | 0,69 | 31,2% | 0,688 |
+| F4 | 0,89 | 4,2% | 0,958 |
 
 ### Os três números da direita
 
 - **Produtividade potencial (Ym): 65,0<!-- valor:yield.ym|1 --> sc/ha.** É o valor informado no cadastro da safra: quanto a lavoura renderia sem falta de água. Veja o [capítulo 5](05-safras.md#sobre-a-produtividade-potencial).
 
-- **Índice do ciclo: 83,0 %<!-- valor:yield.yieldIndexPct|1 -->.** É o produto dos quatro fatores: 1,000 × 1,000 × 0,859 × 0,967 = 0,830. A leitura é direta: a estimativa é que a safra renda 83,0% da produtividade potencial. A falta de água na floração responde pela maior parte da perda.
+- **Índice do ciclo: 57,1 %<!-- valor:yield.yieldIndexPct|1 -->.** É o produto dos quatro fatores: 0,921 × 0,941 × 0,688 × 0,958 = 0,571. A leitura é direta: a estimativa é que a safra renda 57,1% da produtividade potencial. A falta de água na floração responde pela maior parte da perda.
 
-- **Produtividade predita: 54,0<!-- valor:yield.predicted|1 --> sc/ha.** É a produtividade potencial multiplicada pelo índice: 65 × 0,830 = 54,0 sc/ha. A diferença para a Ym, cerca de 11 sacas, é a estimativa do que a falta de água custou nessa safra.
+- **Produtividade predita: 37,1<!-- valor:yield.predicted|1 --> sc/ha.** É a produtividade potencial multiplicada pelo índice: 65 × 0,571 = 37,1 sc/ha. A diferença para a Ym, cerca de 28 sacas, é a estimativa do que a falta de água custou nessa safra.
 
 A linha **4 de 4 janelas alcançadas**, no alto do bloco, diz quantas janelas já entraram na conta com dados reais. A fórmula está escrita abaixo do título do bloco, para quem quiser conferir; a explicação completa está em [`docs/msa/algoritmos.md`](../msa/algoritmos.md), seção 6.
 
@@ -165,6 +165,25 @@ Sem a Ym, o bloco mostra **não informada** no lugar do valor, calcula o índice
 ### Quando a produtividade potencial mudou
 
 Se a Ym da safra foi alterada depois do cálculo, o bloco mostra o aviso **A produtividade potencial da safra mudou … reprocesse para atualizar a predição.** Os números na tela foram calculados com o valor antigo, e o bloco mostra esse valor antigo em **Produtividade potencial (Ym)**. Clique em **Reprocessar** para refazer a conta com o valor novo.
+
+### Água no solo na emergência
+
+Na parte de baixo do bloco Produtividade fica o cartão **Água no solo na emergência**. Ele responde a uma pergunta simples: quando a lavoura nasceu, o solo estava cheio ou já vinha seco?
+
+![Cartão Água no solo na emergência, no bloco Produtividade](img/06-12-agua-no-solo.png)
+
+O sistema não adivinha esse valor. Ele faz a conta da água no solo desde o 1º de fevereiro anterior à emergência, quando o solo costuma estar cheio pelas chuvas de verão, e acompanha a entressafra dia a dia, sem lavoura: o sol e o vento secam, a chuva repõe. O que o cartão mostra é o resultado dessa conta no dia da emergência. O [capítulo 5](05-safras.md#por-que-a-safra-começa-em-fevereiro) explica por que a safra "começa" em fevereiro.
+
+- **O talhão entrou na safra com N % da água disponível.** É a frase principal. 100% significa solo cheio, na capacidade de campo. Quanto menor a porcentagem, mais seco o solo estava quando a plântula nasceu, e mais depressa a lavoura pode sentir falta de água nas primeiras semanas, se a chuva falhar.
+- **Depleção na emergência: X de Y mm esgotados.** O mesmo número em milímetros. Y é toda a água que a camada explorada pelas raízes novas (30 cm na soja de referência) guardaria se estivesse cheia; X é quanto dela faltava no dia da emergência. Veja [Depleção](08-perguntas-e-glossario.md#depleção-dr).
+- **Chuva nos 30 dias anteriores: Z mm.** A chuva do mês que antecedeu a emergência. Ajuda a entender a porcentagem: pouca chuva em setembro e outubro costuma significar solo seco na emergência.
+- **Período do balanço: entressafra 01/02/2025 → 31/10/2025 (Kc 1,00, Zr 0,95 m).** De que dia a que dia a conta da entressafra foi feita e com que parâmetros. **Kc** é o coeficiente usado para a evaporação do solo sem lavoura e **Zr** a profundidade de solo considerada. São valores padrão do sistema, iguais para todos os talhões.
+
+Abaixo vem a frase **O balanço começa no último 1º de fevereiro antes da emergência, com o solo na capacidade de campo, e chega à emergência com a água calculada.**, que resume o método.
+
+Se o cartão disser **Esta execução não tem entressafra (motor anterior); reprocesse para calcular a água na emergência.**, a execução que está na tela foi feita por uma versão anterior do sistema, que começava a conta na emergência com o solo cheio. Clique em **Reprocessar** (agrônomo e administrador) para refazer a conta com a entressafra. O produtor vê o aviso, mas não o botão.
+
+> O número do cartão vale para a água, apenas. Ele não enxerga a palhada, a compactação nem o preparo do solo, e usa os mesmos parâmetros de entressafra em todos os talhões. Use-o junto com o que você viu no campo no plantio.
 
 ## Os três gráficos
 
@@ -212,13 +231,28 @@ Passe o mouse sobre qualquer gráfico. Aparece um quadro com todos os valores da
 
 ![Quadro com os valores de um dia, ao passar o mouse sobre o gráfico](img/06-10-detalhe-do-dia.png)
 
+### Ver a entressafra nos gráficos
+
+Por padrão os três gráficos começam na emergência. Para ver também os meses anteriores, marque a caixa **Mostrar entressafra**, logo acima dos gráficos.
+
+![Os gráficos com a entressafra visível, com a faixa cinza Entressafra antes da emergência](img/06-13-entressafra-nos-graficos.png)
+
+Com a caixa marcada:
+
+- os gráficos passam a começar no 1º de fevereiro anterior à emergência, e os dias sem lavoura ficam sob uma **faixa cinza** chamada **Entressafra**. No gráfico de depleção dá para ver o solo secando ao longo da estação seca e, se choveu antes do plantio, enchendo de novo;
+- ao passar o mouse sobre um dia da entressafra, o quadro mostra a fase **Entressafra**, graus-dia zero e o Kc e a profundidade usados na entressafra;
+- a **linha do tempo F1–F4** não muda: ela continua começando na emergência, porque as janelas são da lavoura;
+- **Exportar série diária** passa a incluir os dias da entressafra, com a coluna Fase igual a `PRE`.
+
+Desmarque a caixa para voltar ao padrão. A caixa fica desabilitada quando a execução na tela foi feita por uma versão anterior do sistema, sem entressafra.
+
 ## Exportar em CSV
 
 Os dois botões do cabeçalho baixam arquivos que abrem no Excel e em outras planilhas.
 
 ![Cabeçalho do painel, com os botões de exportação em destaque](img/06-18-exportar.png)
 
-- **Exportar série diária** baixa uma linha por dia, com a janela, os graus-dia, a profundidade da raiz, a ET₀, o Kc, a ETc, a chuva, a depleção, o Ks, a ETc ajustada, o TAW e o RAW.
+- **Exportar série diária** baixa uma linha por dia, com a janela, os graus-dia, a profundidade da raiz, a ET₀, o Kc, a ETc, a chuva, a depleção, o Ks, a ETc ajustada, o TAW e o RAW. O arquivo traz o que está nos gráficos: por padrão, só os dias da lavoura, da emergência em diante; com **Mostrar entressafra** marcado, também os dias da entressafra, com a coluna Fase igual a `PRE`.
 - **Exportar resumos** baixa uma linha por janela, com os dias, o Ks médio, a redução, a ETc ajustada e a chuva acumuladas, e ainda o índice do ciclo, a produtividade potencial e a produtividade predita, repetidos em todas as linhas. Essas três últimas colunas ficam vazias quando a safra não tem Ym.
 
 O arquivo vai para a pasta de downloads do computador. O nome traz o talhão e a safra, por exemplo `serie-diaria-talhao-1-sede-2025-26-b652aedf.csv`, em que o trecho final identifica a execução. As colunas são separadas por ponto e vírgula e os números usam vírgula decimal, no padrão brasileiro.
@@ -259,7 +293,9 @@ Em vez do painel, a página da safra pode mostrar o quadro **Sem processamento d
 
 É o caso da imagem: a última tentativa terminou com **NEEDS_DATA**, e o quadro lista os dias que faltam. A safra do exemplo emergiu há poucos dias, e os dados de clima chegam com cerca de cinco dias de atraso.
 
-**O que fazer:** nada de imediato. A rotina de segunda-feira busca os dias que faltam e reprocessa a safra. Se quiser tentar antes, clique em **Reprocessar** depois de dois ou três dias. Se o aviso continuar por mais de uma semana, fale com o administrador.
+Quando faltam poucos dias, eles aparecem um a um. Quando faltam muitos, o quadro os agrupa por mês, por exemplo **fev/2025: 28 dias; mar/2025: 31 dias; …**, com o link **ver todas as datas** para a lista completa. Isso é comum na primeira safra de uma região nova: como a conta começa no 1º de fevereiro anterior à emergência ([capítulo 5](05-safras.md#por-que-a-safra-começa-em-fevereiro)), o sistema precisa baixar os dados da entressafra inteira antes de calcular.
+
+**O que fazer:** nada de imediato. Se os meses da entressafra estão faltando, o download já foi disparado ao cadastrar a safra e o processamento acontece sozinho quando ele termina. Se faltam só os últimos dias, a rotina de segunda-feira os busca e reprocessa a safra. Se quiser tentar antes, clique em **Reprocessar** depois de dois ou três dias. Se o aviso continuar por mais de uma semana, fale com o administrador.
 
 ### Falta a altitude do talhão
 
@@ -291,7 +327,7 @@ O produtor vê o mesmo painel, com os mesmos números. A diferença é que ele n
 
 1. **Selo da chuva.** Corrigida ou sem correção? Isso diz quanto confiar no detalhe.
 2. **Cartão de F3.** Qual a cor? Qual a redução estimada?
-3. **Bloco Produtividade.** Qual o índice do ciclo? Quantas sacas a falta de água custou? A predição é parcial?
+3. **Bloco Produtividade.** Qual o índice do ciclo? Quantas sacas a falta de água custou? A predição é parcial? Com quanta água o talhão entrou na safra?
 4. **Gráfico de Ks.** Quando foi a queda e quanto durou?
 5. **Campo.** O que você viu na lavoura confirma o painel?
 6. **Avisos.** A cultivar ou a produtividade potencial mudaram desde o cálculo? Se sim, reprocesse.

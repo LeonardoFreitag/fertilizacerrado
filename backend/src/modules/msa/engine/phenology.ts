@@ -4,15 +4,16 @@
  * Fonte: `docs/msa/algoritmos.md` §2 (janelas) e §5 (Zr); FAO-56 Tabela 22
  * (faixas de Zr por cultura).
  */
-import type { CultivarParams, Phase } from './types';
+import type { CropPhase, CultivarParams } from './types';
 
 /**
  * Janela fenológica pelo GDA acumulado, com limite inferior inclusivo:
  * F1: gda < gdaF1End · F2: gdaF1End ≤ gda < gdaF2End ·
  * F3: gdaF2End ≤ gda < gdaF3End · F4: gdaF3End ≤ gda < gdaTotal ·
- * COMPLETED: gda ≥ gdaTotal. `docs/msa/algoritmos.md` §2.
+ * COMPLETED: gda ≥ gdaTotal. Nunca devolve `PRE` (a entressafra é decidida pela
+ * data, não pelo GDA). `docs/msa/algoritmos.md` §2.
  */
-export function phaseFromGDA(gdaAccum: number, cultivar: CultivarParams): Phase {
+export function phaseFromGDA(gdaAccum: number, cultivar: CultivarParams): CropPhase {
   if (gdaAccum < cultivar.gdaF1End) return 'F1';
   if (gdaAccum < cultivar.gdaF2End) return 'F2';
   if (gdaAccum < cultivar.gdaF3End) return 'F3';

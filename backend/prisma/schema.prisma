@@ -312,6 +312,14 @@ model MsaRun {
   predictedYield   Float?         @map("predicted_yield")
   /// Janelas F1–F4 com dias na série (0–4)
   phasesReached    Int?           @map("phases_reached")
+  /// Início do spin-up de entressafra (último 1º de fevereiro ≤ emergência); nulo em runs de motor < 2.2.0
+  preSeasonFrom    DateTime?      @map("pre_season_from") @db.Date
+  /// Kc e Zr (m) usados na entressafra (snapshot de PRE_SEASON_KC / PRE_SEASON_ZR_MODE)
+  preSeasonKc      Float?         @map("pre_season_kc")
+  preSeasonZr      Float?         @map("pre_season_zr")
+  /// Depleção convertida para zrIni no dia da emergência (mm) e em % de TAW(zrIni)
+  emergenceDepletionMm  Float?    @map("emergence_depletion_mm")
+  emergenceDepletionPct Float?    @map("emergence_depletion_pct")
   /// Os 15 parâmetros científicos + id, name, crop, como estavam no momento
   cultivarSnapshot Json           @map("cultivar_snapshot")
   /// { thetaFC, thetaWP, altitudeM, soilDefaults }

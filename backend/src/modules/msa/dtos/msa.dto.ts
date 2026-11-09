@@ -15,4 +15,11 @@ export const processQuerySchema = z
     seed: z.undefined({ invalid_type_error: 'não existe mais; o processamento é determinístico' }),
   });
 
-export const dailyQuerySchema = z.object({ runId: uuid.optional() });
+export const dailyQuerySchema = z.object({
+  runId: uuid.optional(),
+  /** true ⇒ inclui os dias de entressafra (phase PRE); padrão false */
+  includePreSeason: z
+    .enum(['true', 'false'], { errorMap: () => ({ message: 'use true ou false' }) })
+    .optional()
+    .transform((v) => v === 'true'),
+});

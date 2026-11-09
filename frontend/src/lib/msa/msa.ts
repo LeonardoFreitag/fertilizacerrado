@@ -1,5 +1,6 @@
 /** Funções puras do painel MSA: severidade, faixas fenológicas, produtividade, formatação, safra sugerida. */
 import type { DailyRow, Phase, PhaseView, RunView, YieldPhase } from '../api/types';
+// (RunView também alimenta soilWaterTexts)
 import { toCsv } from './csv';
 
 /**
@@ -47,6 +48,7 @@ const YIELD: YieldPhase[] = ['F1', 'F2', 'F3', 'F4'];
 export function phaseRanges(days: ReadonlyArray<Pick<DailyRow, 'date' | 'phase'>>): Timeline {
   const byPhase = new Map<YieldPhase, { start: string; end: string; days: number }>();
   for (const d of days) {
+    if (d.phase === 'PRE') continue; // entressafra fica fora da linha do tempo F1–F4
     const phase = d.phase === 'COMPLETED' ? 'F4' : d.phase;
     const cur = byPhase.get(phase);
     if (!cur) byPhase.set(phase, { start: d.date, end: d.date, days: 1 });
@@ -63,13 +65,64 @@ export function phaseRanges(days: ReadonlyArray<Pick<DailyRow, 'date' | 'phase'>
     if (r) ranges.push({ phase: p, ...r });
     else pending.push(p);
   }
-  const sorted = [...days].map((d) => d.date).sort();
+  const crop = days.filter((d) => d.phase !== 'PRE');
+  const sorted = crop.map((d) => d.date).sort();
   return {
     ranges,
     pending,
     cycleStart: sorted[0] ?? null,
     cycleEnd: sorted[sorted.length - 1] ?? null,
-    totalDays: days.length,
+    totalDays: crop.length,
+  };
+}
+
+/** Faixa de entressafra (dias PRE) da série, ou null quando não há. */
+export function preSeasonRange(days: ReadonlyArray<Pick<DailyRow, 'date' | 'phase'>>): { start: string; end: string; days: number } | null {
+  const pre = days.filter((d) => d.phase === 'PRE').map((d) => d.date).sort();
+  return pre.length ? { start: pre[0]!, end: pre[pre.length - 1]!, days: pre.length } : null;
+}
+
+/** Chuva acumulada nos `window` dias anteriores à emergência (exclusive), em mm. */
+export function rainBeforeEmergence(days: ReadonlyArray<Pick<DailyRow, 'date' | 'precipitation'>>, emergence: string, window = 30): number {
+  const from = new Date(new Date(`${emergence}T00:00:00Z`).getTime() - window * 86_400_000).toISOString().slice(0, 10);
+  return days.filter((d) => d.date >= from && d.date < emergence).reduce((acc, d) => acc + d.precipitation, 0);
+}
+
+const MONTHS_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+export interface MissingDatesView {
+  /** Agrupado por mês quando há mais de `threshold` datas */
+  grouped: boolean;
+  /** "fev/2026: 28 dias" por mês (ordem cronológica), ou vazio quando não agrupado */
+  groups: { label: string; count: number }[];
+  /** Datas formatadas (lista completa) */
+  dates: string[];
+  total: number;
+}
+
+/** Datas faltantes: por extenso até `threshold`; acima disso, agrupadas por mês com a lista completa à parte. */
+export function groupMissingDates(dates: ReadonlyArray<string>, threshold = 14): MissingDatesView {
+  const sorted = [...dates].sort();
+  const formatted = sorted.map(formatDate);
+  if (sorted.length <= threshold) return { grouped: false, groups: [], dates: formatted, total: sorted.length };
+  const counts = new Map<string, number>();
+  for (const d of sorted) counts.set(d.slice(0, 7), (counts.get(d.slice(0, 7)) ?? 0) + 1);
+  const groups = [...counts.entries()].map(([ym, count]) => {
+    const [y, m] = ym.split('-');
+    return { label: `${MONTHS_PT[Number(m) - 1]}/${y}: ${count} ${count === 1 ? 'dia' : 'dias'}`, count };
+  });
+  return { grouped: true, groups, dates: formatted, total: sorted.length };
+}
+
+/** Textos do cartão "Água no solo na emergência". */
+export function soilWaterTexts(run: Pick<RunView, 'emergenceDepletionPct' | 'emergenceDepletionMm' | 'preSeasonFrom' | 'preSeasonKc' | 'preSeasonZr'>, emergence: string, tawIniMm: number | null) {
+  if (run.preSeasonFrom == null || run.emergenceDepletionPct == null) return null;
+  const available = Math.round(100 - run.emergenceDepletionPct);
+  const preEnd = new Date(new Date(`${emergence}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+  return {
+    headline: `O talhão entrou na safra com ${available} % da água disponível`,
+    depletion: tawIniMm == null ? `${formatNumber(run.emergenceDepletionMm, 1)} mm esgotados` : `${formatNumber(run.emergenceDepletionMm, 1)} de ${formatNumber(tawIniMm, 1)} mm esgotados`,
+    period: `entressafra ${formatDate(run.preSeasonFrom)} → ${formatDate(preEnd)} (Kc ${formatNumber(run.preSeasonKc)}, Zr ${formatNumber(run.preSeasonZr)} m)`,
   };
 }
 
@@ -123,7 +176,7 @@ export function suggestSeason(emergenceDate: string): string {
 }
 
 export function phaseLabelShort(phase: Phase): string {
-  return phase === 'COMPLETED' ? 'Fim' : phase;
+  return phase === 'COMPLETED' ? 'Fim' : phase === 'PRE' ? 'Entressafra' : phase;
 }
 
 // --- produtividade (FAO-33, combinação multiplicativa; docs/msa/algoritmos.md §6) ------------

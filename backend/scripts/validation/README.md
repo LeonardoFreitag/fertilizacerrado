@@ -50,3 +50,13 @@ Para a mesma série, acumula graus-dia por três métodos — `residual` (`max((
 | `--tbase` | 10 | temperatura-base inferior (°C) |
 | `--tupper` | 30 | temperatura-base superior (°C); deve ser > `--tbase` |
 | `--cultivar` | soja | só a referência de soja nesta fase |
+
+## Entressafra (Caso 2 — sensibilidade do spin-up ao Kc)
+
+```bash
+cd backend
+DATABASE_URL=postgresql://... pnpm msa:validate-preseason -- --cell -16.7,-49.3 --emergence 2025-11-01
+pnpm msa:validate-preseason -- dados/celula.csv --emergence 2025-11-01 --kc 0.4,0.7,1.0 --zr-mode zrMax --out dados/preseason.csv
+```
+
+Roda o balanço de `preSeasonStart(emergência)` (último 1º de fevereiro) até a véspera da emergência para cada Kc (padrão 0,4; 0,7; 1,0), com a cultivar de referência, solo padrão 0,28/0,12 (`--soil fc,wp`) e altitude 741 (`--altitude`), e imprime por Kc: dias, chuva e ET₀ acumuladas, depleção ao fim da entressafra (mm e % da TAW do perfil, `--zr-mode zrMax` padrão ou `zrIni`) e depleção convertida para a zona radicular inicial (mm e % de TAW(zrIni)) — a condição inicial do balanço da cultura. Série incompleta encerra com código 1 listando as datas. `--out` grava `kc;zr_m;dias;chuva_mm;et0_mm;dr_pre_mm;dr_pre_pct;dr_ini_mm;dr_ini_pct`. Descritivo: alimenta a comparação com Thornthwaite-Mather em planilha (Caso 2) e a questão aberta #11.

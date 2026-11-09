@@ -22,8 +22,10 @@ describe('planHarvestJobs', () => {
     expect(planHarvestJobs(null, '2025-11-01', '2026-09-29')).toBe('backfill');
   });
 
-  it('emergência dentro do lag ⇒ só processar (vira NEEDS_DATA)', () => {
+  it('emergência dentro do lag ⇒ só processar (vira NEEDS_DATA), mesmo sem cobertura da entressafra', () => {
     expect(planHarvestJobs({ missingDates: ['2026-10-01'] }, '2026-10-01', '2026-09-29')).toBe('process-only-lag');
+    expect(planHarvestJobs(null, '2026-10-01', '2026-09-29')).toBe('process-only-lag'); // decisão pela emergência, antes da cobertura
+    expect(planHarvestJobs({ missingDates: ['2026-02-01', '2026-02-02'] }, '2026-09-01', '2026-09-29')).toBe('backfill'); // lacuna na entressafra ⇒ ingerir
   });
 });
 

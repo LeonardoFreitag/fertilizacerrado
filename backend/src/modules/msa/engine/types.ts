@@ -6,11 +6,17 @@
  * vento em m s⁻¹, lâminas de água em mm, Zr em m, GDA em °C·dia.
  */
 
-/** Janela fenológica. `COMPLETED` = ciclo encerrado (GDA ≥ gdaTotal). */
-export type Phase = 'F1' | 'F2' | 'F3' | 'F4' | 'COMPLETED';
+/**
+ * Fase do dia no balanço. `PRE` = entressafra (spin-up antes da emergência, sem
+ * cultura); F1–F4 = janelas fenológicas; `COMPLETED` = ciclo encerrado (GDA ≥ gdaTotal).
+ */
+export type Phase = 'PRE' | 'F1' | 'F2' | 'F3' | 'F4' | 'COMPLETED';
+
+/** Fases com cultura (o que `phaseFromGDA` devolve; `kcForPhase` e `rootDepth` só aceitam estas). */
+export type CropPhase = Exclude<Phase, 'PRE'>;
 
 /** Janelas com coeficiente Ky (as que entram no resumo de produtividade). */
-export type YieldPhase = Exclude<Phase, 'COMPLETED'>;
+export type YieldPhase = Exclude<CropPhase, 'COMPLETED'>;
 
 export const YIELD_PHASES: readonly YieldPhase[] = ['F1', 'F2', 'F3', 'F4'];
 
@@ -97,14 +103,26 @@ export interface DailyWeather {
   precipitation: number;
 }
 
+/** Entressafra (spin-up) antes da emergência: dias com `date < until` não têm cultura. */
+export interface PreSeasonOptions {
+  /** Data de emergência (AAAA-MM-DD): primeiro dia com cultura */
+  until: string;
+  /** Kc constante da entressafra (solo com palhada); padrão 1,0 = ETP direta (Thornthwaite-Mather) */
+  kc: number;
+  /** Profundidade do perfil balanceado na entressafra (m); zrMax ou zrIni da cultivar */
+  zr: number;
+}
+
 export interface BalanceOptions {
   /** Altitude do talhão (m) — obrigatória: entra em P e γ */
   altitude: number;
-  /** Depleção inicial (mm). Padrão 0 = solo na capacidade de campo */
+  /** Depleção inicial (mm) no primeiro dia da série (o início do spin-up quando há preSeason). Padrão 0 = capacidade de campo */
   initialDepletion?: number;
+  /** Segmento de entressafra antes da emergência; omitido = série começa na emergência */
+  preSeason?: PreSeasonOptions;
 }
 
-/** Uma linha do balanço hídrico diário. */
+/** Uma linha do balanço hídrico diário (dias `PRE` têm gda e gdaAccum 0 e Zr/Kc da entressafra). */
 export interface DailyBalanceRow {
   date: string;
   phase: Phase;

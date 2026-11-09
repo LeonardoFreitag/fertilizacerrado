@@ -6,7 +6,7 @@ export const msaKeys = {
   all: (harvestId: string) => ['msa', harvestId] as const,
   latest: (harvestId: string) => ['msa', harvestId, 'latest'] as const,
   runs: (harvestId: string) => ['msa', harvestId, 'runs'] as const,
-  daily: (harvestId: string, runId: string) => ['msa', harvestId, 'daily', runId] as const,
+  daily: (harvestId: string, runId: string, includePreSeason = false) => ['msa', harvestId, 'daily', runId, includePreSeason ? 'pre' : 'crop'] as const,
 };
 
 /** Última run SUCCEEDED; 404 NO_MSA_RESULT é estado normal (sem retry). */
@@ -23,11 +23,12 @@ export function useMsaRuns(harvestId: string | undefined) {
   return useQuery({ queryKey: msaKeys.runs(harvestId ?? ''), queryFn: () => api<RunView[]>(`/harvests/${harvestId}/msa/runs`), enabled: !!harvestId });
 }
 
-export function useDailySeries(harvestId: string | undefined, runId: string | undefined) {
+/** Série diária da run; `includePreSeason` traz também os dias de entressafra (phase PRE). */
+export function useDailySeries(harvestId: string | undefined, runId: string | undefined, includePreSeason = false, enabled = true) {
   return useQuery({
-    queryKey: msaKeys.daily(harvestId ?? '', runId ?? ''),
-    queryFn: () => api<DailySeries>(`/harvests/${harvestId}/msa/daily`, { query: { runId } }),
-    enabled: !!harvestId && !!runId,
+    queryKey: msaKeys.daily(harvestId ?? '', runId ?? '', includePreSeason),
+    queryFn: () => api<DailySeries>(`/harvests/${harvestId}/msa/daily`, { query: { runId, includePreSeason: includePreSeason ? 'true' : undefined } }),
+    enabled: !!harvestId && !!runId && enabled,
     staleTime: Infinity, // a série de uma run nunca muda
   });
 }

@@ -34,8 +34,8 @@ export const msaController = {
 
   async daily(req: Request, res: Response): Promise<void> {
     const { id } = msaParamsSchema.parse(req.params);
-    const { runId } = dailyQuerySchema.parse(req.query);
-    res.status(200).json(await msaService.getDaily(currentUser(req), id, runId));
+    const { runId, includePreSeason } = dailyQuerySchema.parse(req.query);
+    res.status(200).json(await msaService.getDaily(currentUser(req), id, runId, includePreSeason));
   },
 
   async runs(req: Request, res: Response): Promise<void> {

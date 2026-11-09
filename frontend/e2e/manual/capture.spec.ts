@@ -4,7 +4,8 @@
  * remove tudo ao final. Uso: `pnpm manual:capture` na raiz (stack de dev no ar).
  *
  * Pré-requisitos: admin semeado (ADMIN_EMAIL/ADMIN_PASSWORD no .env), internet para os
- * tiles do mapa e cache do ETL com a célula de Goiânia desde 2025-10. Não contacta o CDS,
+ * tiles do mapa e cache do ETL com a célula de Goiânia desde 2025-02 (início do spin-up de
+ * entressafra da safra de exemplo, motor 2.2.0). Não contacta o CDS,
  * não dispara ingestão nem calibração. MANUAL_KEEP_DATA=1 mantém os dados de demonstração.
  */
 import { copyFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -19,7 +20,8 @@ import {
 interface RunRow { id: string; status: 'SUCCEEDED' | 'NEEDS_DATA' | 'FAILED'; reason: string; missingDates?: string[] | null; qmCalibration?: unknown }
 interface PhaseRow { phase: string; days: number; ksMean: number | null; yieldReductionPct: number | null; etcAdjAccum: number | null; precipAccum: number | null }
 interface YieldRun { expectedYield: number | null; yieldIndex: number | null; predictedYield: number | null; phasesReached: number | null }
-interface Latest { run: RunRow & YieldRun & { dateFrom: string; dateTo: string }; currentPhase: string | null; phases: PhaseRow[] }
+interface PreSeasonRun { preSeasonFrom: string | null; preSeasonKc: number | null; preSeasonZr: number | null; emergenceDepletionMm: number | null; emergenceDepletionPct: number | null }
+interface Latest { run: RunRow & YieldRun & PreSeasonRun & { dateFrom: string; dateTo: string }; currentPhase: string | null; phases: PhaseRow[] }
 
 /** Estado compartilhado entre os capítulos (os testes rodam em série). */
 const ctx = { propertyId: '', field1Id: '', field2Id: '', ownCultivarId: '', harvest1Id: '', harvest2Id: '', capture: {} as Record<string, unknown> };
@@ -440,6 +442,27 @@ test('capítulo 6 — painel agrometeorológico', async ({ page }) => {
   await expect(yieldBlock.getByTestId('yield-ym')).toContainText('sc/ha');
   await shot(page, '06-11-produtividade', { clip: yieldBlock });
 
+  // cartão "Água no solo na emergência" (entressafra, motor 2.2.0): espera a chuva dos 30 dias carregar
+  const soilWater = page.getByTestId('soil-water-card');
+  await expect(soilWater.getByTestId('soil-water-headline')).toContainText('% da água disponível', { timeout: 20_000 });
+  await expect(soilWater.getByTestId('soil-water-rain')).toContainText('mm', { timeout: 20_000 });
+  await shot(page, '06-12-agua-no-solo', { clip: soilWater, pad: 10 });
+  const soilWaterOnScreen = {
+    headline: (await soilWater.getByTestId('soil-water-headline').innerText()).trim(),
+    depletionText: (await soilWater.getByTestId('soil-water-depletion').innerText()).trim(),
+    rainText: (await soilWater.getByTestId('soil-water-rain').innerText()).trim(),
+  };
+
+  // alternador "Mostrar entressafra": faixa cinza "Entressafra" nos gráficos; depois volta ao padrão
+  const togglePreSeason = page.getByTestId('toggle-preseason');
+  await expect(togglePreSeason).toBeEnabled();
+  await togglePreSeason.check();
+  await expect(charts.getByText('Entressafra', { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+  await page.waitForTimeout(1800); // animação de entrada dos gráficos com a série maior
+  await shot(page, '06-13-entressafra-nos-graficos', { clip: charts });
+  await togglePreSeason.uncheck();
+  await expect(charts.getByText('Entressafra', { exact: true })).toHaveCount(0, { timeout: 20_000 });
+
   await shot(page, '06-18-exportar', { clip: header, highlight: [page.getByRole('button', { name: 'Exportar série diária' }), page.getByRole('button', { name: 'Exportar resumos' })] });
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Exportar série diária' }).click()]);
   ctx.capture.csvFile = download.suggestedFilename().replace(/-[0-9a-f]{8}\.csv$/, '-<run>.csv');
@@ -479,6 +502,14 @@ test('capítulo 6 — painel agrometeorológico', async ({ page }) => {
       predictedYield: latest.run.predictedYield,
       phasesReached: latest.run.phasesReached,
       ...yieldOnScreen,
+    },
+    soilWater: {
+      preSeasonFrom: latest.run.preSeasonFrom,
+      preSeasonKc: latest.run.preSeasonKc,
+      preSeasonZr: latest.run.preSeasonZr,
+      depletionMm: latest.run.emergenceDepletionMm,
+      depletionPct: latest.run.emergenceDepletionPct,
+      ...soilWaterOnScreen,
     },
   });
 });

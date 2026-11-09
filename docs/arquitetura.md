@@ -30,6 +30,7 @@ Produto principal da dissertação. Processa dados ERA5-Land e prediz a produtiv
 | Safras | Vínculo talhão + cultivar + data de emergência + produtividade potencial (Ym, sc/ha) |
 | Motor MSA | ETL ERA5-Land, ET₀ FAO-56, balanço hídrico, GDA, Ks médio e redução de produtividade por janela (FAO-33) |
 | Predição de produtividade | Índice do ciclo FAO-33 (Π das janelas alcançadas), Ym por safra, produtividade predita em sc/ha |
+| Entressafra (spin-up) | Balanço de cada safra começa no último 1º de fevereiro ≤ emergência, com o solo na capacidade de campo e sem cultura (Kc e Zr constantes, `PRE_SEASON_*`); a depleção na emergência é calculada, não assumida (motor 2.2.0, `docs/msa/algoritmos.md` §5) |
 
 ### Fase 2 — Plataforma Core
 | Módulo | Responsabilidade |
@@ -74,22 +75,23 @@ Produto principal da dissertação. Processa dados ERA5-Land e prediz a produtiv
   └── Carga em lote → PostgreSQL / TimescaleDB
         │
         ▼
-[BullMQ / Redis]  scheduler semanal (seg 02:00 BRT) · backfill ao criar safra · admin
+[BullMQ / Redis]  scheduler semanal (seg 02:00 BRT) · backfill ao criar safra (cobertura desde o último 1º de fevereiro ≤ emergência) · admin
   flow: era5-ingest (Python) → msa-process (Node)
         │
         ▼
 [Processo worker Node.js / TypeScript]  (a API só enfileira)
-  ├── Acúmulo de GDA → Projeção das janelas F1–F4
+  ├── Entressafra (spin-up): balanço sem cultura de 1º de fevereiro à véspera da emergência → depleção na emergência
+  ├── Acúmulo de GDA (desde a emergência) → Projeção das janelas F1–F4
   ├── ET₀ diária (FAO-56 Penman-Monteith)
   ├── Balanço hídrico diário (TAW, RAW, Dr, Ks)
   ├── Resumo por janela F1–F4 (Ks médio, redução Ky·(1−Ks̄))
   └── Índice do ciclo (Π das janelas alcançadas) → produtividade predita = Ym × índice
-        │  série diária, resumos, índice, predita → msa_runs (reason, jobId, cultivarSnapshot)
+        │  série diária (dias PRE + cultura), resumos, índice, predita, depleção na emergência → msa_runs (reason, jobId, cultivarSnapshot, preSeason*)
         ▼
 [React Frontend — SPA atrás do mesmo Nginx (/ → SPA, /api → API)]
   ├── Autenticação (token em memória + refresh por cookie HttpOnly), propriedades e talhões no mapa
-  ├── Bloco Produtividade: Ym, redução por janela, índice do ciclo, produtividade predita (sc/ha)
-  ├── Painel de janelas fenológicas e histórico hídrico
+  ├── Bloco Produtividade: Ym, redução por janela, índice do ciclo, produtividade predita (sc/ha), cartão "Água no solo na emergência"
+  ├── Painel de janelas fenológicas e histórico hídrico (gráficos com alternador "Mostrar entressafra")
   └── Indicador de estresse por janela (Ks médio)
 ```
 
@@ -101,6 +103,7 @@ O MSA **não opera em tempo real**. Trabalha com o conceito de **predição retr
 
 - Os dados ERA5-Land têm lag nativo de ~5 dias pela API Copernicus
 - O processamento ocorre em **cron jobs semanais** (batch); cada run é determinística e reproduzível (`cultivarSnapshot`, `ENGINE_VERSION`)
+- O balanço hídrico de cada safra **não começa na emergência**: começa no último 1º de fevereiro anterior a ela, com o solo na capacidade de campo, e atravessa a entressafra sem cultura (spin-up, Thornthwaite-Mather) — por isso a cobertura ERA5-Land exigida ao criar a safra, e o backfill, partem de fevereiro, e a run informa com quanta água o talhão entrou na safra
 - O estresse hídrico é consolidado por **janela fenológica** (F1, F2, F3, F4): Ks médio e redução de produtividade Ky·(1 − Ks̄) de cada janela, combinadas no índice do ciclo FAO-33
 - A saída é a **produtividade predita** (sc/ha) frente à **produtividade potencial** (Ym) informada pelo agrônomo na safra; enquanto o ciclo não termina, as janelas não alcançadas entram sem estresse e a predição é marcada como parcial
 - A predição é **atualizada a cada semana**, à medida que novas janelas são alcançadas, e consolidada ao fim do ciclo

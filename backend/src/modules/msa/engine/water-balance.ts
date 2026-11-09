@@ -9,6 +9,7 @@ import { referenceET0WithGamma, atmosphericPressure, psychrometricConstant } fro
 import { dailyGDA } from './gda';
 import { kcForPhase } from './kc';
 import { phaseFromGDA, rootDepth } from './phenology';
+import { convertDepletion } from './pre-season';
 import type {
   BalanceOptions,
   CultivarParams,
@@ -49,9 +50,16 @@ function assertFinite(value: number, name: string, index: number): void {
 }
 
 /**
- * Balanço hídrico diário desde a emergência.
+ * Balanço hídrico diário, opcionalmente com spin-up de entressafra.
  *
- * Para cada dia d, nesta ordem:
+ * Com `options.preSeason = { until, kc, zr }`, os dias com `date < until` são
+ * `PRE`: sem cultura (gda 0, gdaAccum 0), Zr e Kc constantes da entressafra e a
+ * mesma cadeia TAW/RAW/Ks/ET₀/ETc/Dr; no primeiro dia com `date ≥ until` a
+ * depleção do perfil é convertida para a zona radicular inicial por proporção
+ * (`convertDepletion`, hipótese de umidade uniforme) e o balanço segue como
+ * abaixo. `docs/msa/algoritmos.md` §5.
+ *
+ * Para cada dia d de cultura, nesta ordem:
  *  1. GDA_d e GDA acumulado (ao fim do dia) → fase, Zr, Kc;
  *  2. TAW_d e RAW_d pelo Zr do dia (Eq. 82, 83) — a depleção não é alterada
  *     quando a raiz aprofunda;
@@ -76,6 +84,15 @@ export function runDailyBalance(
     throw new RangeError('thetaFC deve ser maior que thetaWP');
   }
 
+  const pre = options.preSeason;
+  if (pre) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(pre.until)) throw new RangeError(`preSeason.until deve ser AAAA-MM-DD: ${pre.until}`);
+    assertFinite(pre.kc, 'preSeason.kc', -1);
+    assertFinite(pre.zr, 'preSeason.zr', -1);
+    if (pre.kc <= 0) throw new RangeError('preSeason.kc deve ser maior que zero');
+    if (pre.zr <= 0) throw new RangeError('preSeason.zr deve ser maior que zero');
+  }
+
   const gamma = psychrometricConstant(atmosphericPressure(options.altitude));
   const rows = new Array<DailyBalanceRow>(days.length);
 
@@ -83,6 +100,10 @@ export function runDailyBalance(
   let dr = options.initialDepletion ?? 0;
   assertFinite(dr, 'initialDepletion', -1);
   if (dr < 0) throw new RangeError('initialDepletion não pode ser negativa');
+  // Entressafra: TAW do perfil balanceado antes da emergência; `inPreSeason`
+  // vira false no primeiro dia de cultura, quando a depleção é convertida.
+  const tawPre = pre ? totalAvailableWater(soil.thetaFC, soil.thetaWP, pre.zr) : 0;
+  let inPreSeason = !!pre;
 
   for (let i = 0; i < days.length; i++) {
     const day = days[i]!;
@@ -94,11 +115,28 @@ export function runDailyBalance(
     assertFinite(day.precipitation, 'precipitation', i);
     if (day.tmean !== undefined) assertFinite(day.tmean, 'tmean', i);
 
-    const gda = dailyGDA(day.tmax, day.tmin, cultivar.tBase, cultivar.tUpper ?? null);
-    gdaAccum += gda;
-    const phase = phaseFromGDA(gdaAccum, cultivar);
-    const zr = rootDepth(gdaAccum, cultivar);
-    const kc = kcForPhase(phase, gdaAccum, cultivar);
+    let gda: number;
+    let phase: DailyBalanceRow['phase'];
+    let zr: number;
+    let kc: number;
+    if (inPreSeason && day.date < pre!.until) {
+      // Dia de entressafra: sem cultura, Zr/Kc constantes.
+      gda = 0;
+      phase = 'PRE';
+      zr = pre!.zr;
+      kc = pre!.kc;
+    } else {
+      if (inPreSeason) {
+        // Primeiro dia de cultura: Dr do perfil → zona radicular inicial (proporção).
+        dr = convertDepletion(dr, tawPre, totalAvailableWater(soil.thetaFC, soil.thetaWP, cultivar.zrIni));
+        inPreSeason = false;
+      }
+      gda = dailyGDA(day.tmax, day.tmin, cultivar.tBase, cultivar.tUpper ?? null);
+      gdaAccum += gda;
+      phase = phaseFromGDA(gdaAccum, cultivar);
+      zr = rootDepth(gdaAccum, cultivar);
+      kc = kcForPhase(phase, gdaAccum, cultivar);
+    }
 
     const taw = totalAvailableWater(soil.thetaFC, soil.thetaWP, zr);
     const raw = readilyAvailableWater(cultivar.depletionFraction, taw);

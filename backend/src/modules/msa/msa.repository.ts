@@ -58,7 +58,11 @@ export const msaRepository = {
     return prisma.msaRun.findUnique({ where: { id: harvest.latestRunId }, include: runWithSummaries });
   },
 
-  dailyResults(runId: string) {
-    return prisma.msaDailyResult.findMany({ where: { runId }, orderBy: { date: 'asc' } });
+  /** Série diária da run; por padrão sem os dias de entressafra (`phase = 'PRE'`). */
+  dailyResults(runId: string, options: { includePreSeason?: boolean } = {}) {
+    return prisma.msaDailyResult.findMany({
+      where: options.includePreSeason ? { runId } : { runId, phase: { not: 'PRE' } },
+      orderBy: { date: 'asc' },
+    });
   },
 };

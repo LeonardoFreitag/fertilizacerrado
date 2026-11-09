@@ -51,13 +51,22 @@ Graus-dia pelo **método de Ometto (1981)**, cinco casos em função das tempera
 | F3 — Floração/Enchimento | 450–900 | 1,00 |
 | F4 — Maturação | 900–1.200 | 0,40 |
 
-### Predição de produtividade (motor determinístico, `ENGINE_VERSION` 2.1.0)
+### Predição de produtividade (motor determinístico, `ENGINE_VERSION` 2.2.0)
 - **Ym** (produtividade potencial) informada por safra em sc/ha (`expectedYield`, > 0 e ≤ 250 — `EXPECTED_YIELD_MAX_SC_HA`); a run grava um snapshot; alterar a Ym depois exige reprocessar
 - Redução por janela: $RY_j = Ky_j (1 - \overline{Ks}_j)$ (FAO-33, Eq. 3.2)
 - Índice do ciclo: $Y_a/Y_m = \prod_j [1 - Ky_j (1 - \overline{Ks}_j)]$ sobre as janelas alcançadas; janela não alcançada = fator 1 (`phasesReached` 0–4)
 - Produtividade predita: $Y_a = Y_m \times$ índice (sc/ha); nula sem Ym
 - Sem faixa de incerteza (valor único); sem Monte Carlo, cenários de decisão ou registro de decisão — removidos em 2026-11-02
 - Código: `backend/src/modules/msa/engine/yield.ts` (`cycleYieldIndex`, `predictedYield`); fórmulas em `docs/msa/algoritmos.md` §6
+
+### Entressafra (spin-up) — motor 2.2.0
+- O balanço de toda safra começa no **último 1º de fevereiro ≤ emergência** (`preSeasonStart`), com o solo na capacidade de campo (`initialDepletion` 0 no início do spin-up), e atravessa a entressafra **sem cultura** — padrão Thornthwaite-Mather (1955); a depleção na emergência é calculada, não assumida
+- Dias anteriores à emergência têm `phase = 'PRE'`, GDA 0, Kc constante **1,0** (`PRE_SEASON_KC`, ETP direta) e Zr constante = **zrMax** (`PRE_SEASON_ZR_MODE`, alternativa `zrIni`) — valores **provisórios** (questões #11/#12 em `docs/msa/questoes-abertas.md`); Ks usa o `p` da cultivar (0,50) mesmo sem cultura (aproximação registrada)
+- No primeiro dia de cultura a depleção é convertida por proporção: `Dr_ini = Dr_pre × TAW(zrIni)/TAW(zrPre)` (`convertDepletion`; hipótese de umidade uniforme no perfil — limitação registrada em `algoritmos.md` §5)
+- `PRE` fica **fora** das janelas: `phaseFromGDA` nunca o devolve, `summarizeByPhase`/`cycleYieldIndex` o ignoram, `currentPhase` nunca é `PRE`; a linha do tempo F1–F4 começa na emergência
+- A run grava `preSeasonFrom`, `preSeasonKc`, `preSeasonZr`, `emergenceDepletionMm`, `emergenceDepletionPct` (snapshot — mudar o `.env` exige reprocessar); `dateFrom` = início do spin-up; `GET /msa/daily?includePreSeason=true` devolve os dias `PRE` (padrão exclui); a regra "emergência dentro do lag" continua avaliada sobre a emergência e uma run `SUCCEEDED` sempre tem ≥ 1 dia de cultura
+- Cobertura/backfill ERA5 ao criar a safra partem de `preSeasonStart(emergência)` (≈ 8 meses a mais por célula nova)
+- Código: `backend/src/modules/msa/engine/pre-season.ts`, `water-balance.ts` (`runDailyBalance(…, { preSeason })`), `backend/src/config/pre-season.ts`; validação `pnpm msa:validate-preseason` (Caso 2)
 
 ### Roles do sistema
 - `ADMIN` — acesso total

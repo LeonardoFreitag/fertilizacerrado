@@ -41,4 +41,4 @@ As imagens são geradas por um roteiro automático, que monta os dados de demons
 3. Revise o texto dos capítulos afetados. O comando acusa imagem ausente, imagem sem uso, link quebrado e número do capítulo 6 diferente do capturado.
 4. Rode `pnpm manual:pdf` para gerar de novo o `manual-completo.pdf`.
 
-A captura precisa de internet, para carregar os mapas, e do histórico de clima do ponto de demonstração já baixado no ambiente. Ela não roda na integração contínua. Os detalhes técnicos estão em [`docs/modulos/frontend.md`](../modulos/frontend.md).
+A captura precisa de internet, para carregar os mapas, e do histórico de clima do ponto de demonstração já baixado no ambiente — desde o 1º de fevereiro anterior à emergência da safra de exemplo, porque o balanço começa na entressafra. Ela não roda na integração contínua. Os detalhes técnicos estão em [`docs/modulos/frontend.md`](../modulos/frontend.md).

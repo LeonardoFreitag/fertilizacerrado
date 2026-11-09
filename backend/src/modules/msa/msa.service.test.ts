@@ -17,16 +17,19 @@ vi.mock('./msa.repository', () => ({
   },
 }));
 vi.mock('../harvests/harvest.service', () => ({ harvestService: { getAccessible: vi.fn().mockResolvedValue({}) } }));
+vi.mock('../../config/pre-season', () => ({ preSeasonConfig: () => ({ kc: 1, zrMode: 'zrMax' }) }));
 
 import { ENGINE_VERSION } from './engine';
 import { era5Repository } from './era5.repository';
 import { msaRepository } from './msa.repository';
-import { cultivarChangedSinceRun, DEFAULT_SOIL, msaService, resolveInterval, snapshotCultivar, snapshotSoil, yieldFields } from './msa.service';
+import { cultivarChangedSinceRun, DEFAULT_SOIL, emergenceDepletion, msaService, resolveInterval, snapshotCultivar, snapshotSoil, yieldFields } from './msa.service';
 
 const USER = { id: 'u1', role: 'AGRONOMO' as const };
 const SOJA = { ...referenceCultivar('SOJA'), id: 'c1', cycleDescription: null, isDefault: true, createdById: null, referenceSnapshot: null, createdAt: new Date(), updatedAt: new Date() };
 const FIELD = { id: 'f1', name: 'T1', propertyId: 'p1', altitudeM: 741, thetaFC: 0.3, thetaWP: 0.14 };
 const SERIES = syntheticSeason(150, 2026); // 2025-11-01 … 2026-03-30
+/** Série desde o início do spin-up (1º de fevereiro de 2025) até 2026-03-30: 423 dias, com estação seca maio–setembro. */
+const FULL = syntheticSeason(423, 2026, '2025-02-01');
 const TODAY = new Date().toISOString().slice(0, 10);
 
 function harvest(overrides: Partial<{ field: typeof FIELD; emergence: string; expectedYield: number | null; cultivar: typeof SOJA }> = {}) {
@@ -74,6 +77,18 @@ describe('resolveInterval', () => {
     const noTb = resolveInterval('2025-11-01', '2026-03-30', hot, { ...SOJA, tUpper: null });
     expect(withTb.to >= noTb.to).toBe(true);
     expect(withTb.to > noTb.to).toBe(true);
+  });
+
+  it('com emergência: GDA só conta a partir dela; lacunas da entressafra entram em missingDates', () => {
+    const r = resolveInterval('2025-02-01', '2026-03-30', FULL, SOJA, '2025-11-01');
+    const noPre = resolveInterval('2025-11-01', '2026-03-30', FULL.filter((d) => d.date >= '2025-11-01'), SOJA);
+    expect(r.to).toBe(noPre.to); // o spin-up não adianta o fim do ciclo
+    expect(r.days[0]!.date).toBe('2025-02-01');
+    expect(r.missingDates).toEqual([]);
+    const gap = resolveInterval('2025-02-01', '2026-03-30', FULL.filter((d) => d.date !== '2025-07-01'), SOJA, '2025-11-01');
+    expect(gap.missingDates).toEqual(['2025-07-01']);
+    const lag = resolveInterval('2025-02-01', '2025-10-20', FULL, SOJA, '2025-11-01');
+    expect(lag).toMatchObject({ from: '2025-02-01', to: '2025-11-01', days: [], missingDates: ['2025-11-01'] });
   });
 
   it('série vazia ⇒ todas as datas faltam até o limite', () => {
@@ -124,7 +139,7 @@ describe('msaService.processHarvest', () => {
 
   it('lacuna ⇒ run NEEDS_DATA com as datas, sem calcular', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
-    era5.getDailySeriesForField.mockResolvedValue(SERIES.filter((d) => d.date !== '2025-11-15' && d.date !== '2025-11-16'));
+    era5.getDailySeriesForField.mockResolvedValue(FULL.filter((d) => d.date !== '2025-11-15' && d.date !== '2025-11-16'));
     const r = await msaService.processHarvest(USER, 'h1');
     expect(r.run.status).toBe('NEEDS_DATA');
     expect(r.run.missingDates).toEqual(['2025-11-15', '2025-11-16']);
@@ -133,19 +148,48 @@ describe('msaService.processHarvest', () => {
     expect(repo.createRun).toHaveBeenCalledWith(expect.objectContaining({ status: 'NEEDS_DATA', engineVersion: ENGINE_VERSION }));
   });
 
+  it('lacuna na entressafra ⇒ NEEDS_DATA com as datas de junho', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
+    era5.getDailySeriesForField.mockResolvedValue(FULL.filter((d) => d.date !== '2025-06-10' && d.date !== '2025-06-11'));
+    const r = await msaService.processHarvest(USER, 'h1');
+    expect(r.run.status).toBe('NEEDS_DATA');
+    expect(r.run.missingDates).toEqual(['2025-06-10', '2025-06-11']);
+    expect(era5.getDailySeriesForField).toHaveBeenCalledWith('f1', '2025-02-01', expect.any(String));
+  });
+
+  it('safra criada 3 dias após a emergência ⇒ NEEDS_DATA com a emergência, sem consultar a série', async () => {
+    const addDays = (iso: string, n: number) => new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
+    const emergence = addDays(TODAY, -3);
+    repo.findHarvestForProcessing.mockResolvedValue(harvest({ emergence }) as never);
+    const r = await msaService.processHarvest(USER, 'h1');
+    expect(r.run.status).toBe('NEEDS_DATA');
+    expect(r.run.missingDates).toEqual([emergence]);
+    expect(r.currentPhase).toBeNull();
+    expect(era5.getDailySeriesForField).not.toHaveBeenCalled();
+    expect(repo.createSucceededRun).not.toHaveBeenCalled();
+  });
+
   it('emergência dentro do lag ⇒ NEEDS_DATA sem consultar o clima', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest({ emergence: TODAY }) as never);
     const r = await msaService.processHarvest(USER, 'h1');
     expect(r.run.status).toBe('NEEDS_DATA');
+    expect(r.run.missingDates).toEqual([TODAY]);
     expect(era5.getDailySeriesForField).not.toHaveBeenCalled();
   });
 
-  it('série completa ⇒ SUCCEEDED com snapshots fiéis, 4 resumos, índice e produtividade predita', async () => {
+  it('série completa desde fevereiro ⇒ SUCCEEDED com snapshots fiéis, 4 resumos, índice, predita e entressafra', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
-    era5.getDailySeriesForField.mockResolvedValue(SERIES);
+    era5.getDailySeriesForField.mockResolvedValue(FULL);
     const r = await msaService.processHarvest(USER, 'h1');
     expect(r.run.status).toBe('SUCCEEDED');
-    expect(r.run.engineVersion).toBe('2.1.0');
+    expect(r.run.engineVersion).toBe('2.2.0');
+    expect(r.run.dateFrom).toBe('2025-02-01');
+    expect(r.run.preSeasonFrom).toBe('2025-02-01');
+    expect(r.run.preSeasonKc).toBe(1);
+    expect(r.run.preSeasonZr).toBe(0.95);
+    expect(r.run.emergenceDepletionPct).toBeGreaterThan(0); // estação seca antes da emergência
+    expect(r.run.emergenceDepletionPct).toBeLessThanOrEqual(100);
+    expect(r.run.emergenceDepletionMm).toBeCloseTo((r.run.emergenceDepletionPct! / 100) * 1000 * (0.3 - 0.14) * 0.3, 6);
     expect(r.run.cultivarSnapshot).toMatchObject({ id: 'c1', gdaTotal: 1200 });
     expect(r.run.soilSnapshot).toEqual({ thetaFC: 0.3, thetaWP: 0.14, altitudeM: 741, soilDefaults: false });
     expect(r.phases).toHaveLength(4);
@@ -161,15 +205,19 @@ describe('msaService.processHarvest', () => {
     const [created, daily, summaries] = repo.createSucceededRun.mock.calls[0]!;
     expect(created).not.toHaveProperty('seed');
     expect(created).not.toHaveProperty('iterations');
-    expect(daily.length).toBeGreaterThan(60);
+    expect(daily.length).toBeGreaterThan(300);
     expect(summaries.map((s) => s.phase)).toEqual(['F1', 'F2', 'F3', 'F4']);
     expect(summaries[0]).not.toHaveProperty('ksMeanP50');
-    expect(daily[0]!.date.toISOString().slice(0, 10)).toBe('2025-11-01');
+    expect(daily[0]!.date.toISOString().slice(0, 10)).toBe('2025-02-01');
+    expect(daily[0]!.phase).toBe('PRE');
+    expect(daily[0]!.gda).toBe(0);
+    expect(daily.find((d) => d.date.toISOString().slice(0, 10) === '2025-11-01')!.phase).toBe('F1');
+    expect(r.currentPhase).not.toBe('PRE');
   });
 
   it('safra sem Ym ⇒ índice e janelas gravados, predita e Ym nulas', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest({ expectedYield: null }) as never);
-    era5.getDailySeriesForField.mockResolvedValue(SERIES);
+    era5.getDailySeriesForField.mockResolvedValue(FULL);
     const r = await msaService.processHarvest(USER, 'h1');
     expect(r.run.status).toBe('SUCCEEDED');
     expect(r.run.expectedYield).toBeNull();
@@ -182,7 +230,11 @@ describe('msaService.processHarvest', () => {
     // Emergência há 40 dias e série completa até hoje − 6: ~35 dias × ~15 °C·dia ⇒ F2/F3, sem F4.
     const addDays = (iso: string, n: number) => new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
     const emergence = addDays(TODAY, -40);
-    const recent = SERIES.slice(0, 35).map((d, i) => ({ ...d, date: addDays(emergence, i) }));
+    // Série sintética do início do spin-up (1º de fevereiro anterior) até emergência + 34 dias.
+    const { preSeasonStart } = await import('./engine');
+    const start = preSeasonStart(emergence);
+    const total = Math.round((new Date(`${addDays(emergence, 34)}T00:00:00Z`).getTime() - new Date(`${start}T00:00:00Z`).getTime()) / 86_400_000) + 1;
+    const recent = syntheticSeason(total, 2026, start);
     repo.findHarvestForProcessing.mockResolvedValue(harvest({ emergence }) as never);
     era5.getDailySeriesForField.mockResolvedValue(recent);
     const r = await msaService.processHarvest(USER, 'h1');
@@ -193,7 +245,7 @@ describe('msaService.processHarvest', () => {
 
   it('mesmos dados ⇒ resumos, série, índice e predita idênticos (determinístico, sem semente)', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
-    era5.getDailySeriesForField.mockResolvedValue(SERIES);
+    era5.getDailySeriesForField.mockResolvedValue(FULL);
     const r1 = await msaService.processHarvest(USER, 'h1');
     const r2 = await msaService.processHarvest(USER, 'h1');
     const [, d1, s1] = repo.createSucceededRun.mock.calls[0]!;
@@ -202,14 +254,51 @@ describe('msaService.processHarvest', () => {
     expect(d1).toEqual(d2);
     expect(r1.run.yieldIndex).toBe(r2.run.yieldIndex);
     expect(r1.run.predictedYield).toBe(r2.run.predictedYield);
+    expect(r1.run.emergenceDepletionMm).toBe(r2.run.emergenceDepletionMm);
+  });
+
+  it('entressafra seca ⇒ depleção na emergência > 0 e Ks inicial ≤ run com depleção 0', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
+    era5.getDailySeriesForField.mockResolvedValue(FULL);
+    const r = await msaService.processHarvest(USER, 'h1');
+    const [, daily] = repo.createSucceededRun.mock.calls[0]!;
+    const firstCrop = daily.find((d) => d.phase === 'F1')!;
+    const { runDailyBalance: rdb } = await import('./engine');
+    const noPre = rdb(SERIES, SOJA as never, { thetaFC: 0.3, thetaWP: 0.14 }, { altitude: 741 });
+    expect(r.run.emergenceDepletionPct!).toBeGreaterThan(0);
+    expect(firstCrop.ks).toBeLessThanOrEqual(noPre[0]!.ks);
+  });
+
+  it('emergência em 1º de fevereiro ⇒ sem PRE, depleção 0', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest({ emergence: '2025-02-01' }) as never);
+    era5.getDailySeriesForField.mockResolvedValue(FULL);
+    const r = await msaService.processHarvest(USER, 'h1');
+    expect(r.run.status).toBe('SUCCEEDED');
+    expect(r.run.preSeasonFrom).toBe('2025-02-01');
+    expect(r.run.emergenceDepletionMm).toBe(0);
+    expect(r.run.emergenceDepletionPct).toBe(0);
+    const [, daily] = repo.createSucceededRun.mock.calls[0]!;
+    expect(daily.some((d) => d.phase === 'PRE')).toBe(false);
   });
 
   it('erro na gravação ⇒ run FAILED com a mensagem e 500', async () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
-    era5.getDailySeriesForField.mockResolvedValue(SERIES);
+    era5.getDailySeriesForField.mockResolvedValue(FULL);
     repo.createSucceededRun.mockRejectedValueOnce(new Error('disco cheio'));
     await expect(msaService.processHarvest(USER, 'h1')).rejects.toMatchObject({ status: 500, code: 'MSA_PROCESSING_FAILED' });
     expect(repo.createRun).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED', error: 'Error: disco cheio' }));
+  });
+});
+
+describe('emergenceDepletion', () => {
+  const soil = { thetaFC: 0.28, thetaWP: 0.12, altitudeM: 741, soilDefaults: false };
+  it('120 mm sobre zrMax 0,95 → 37,9 mm sobre zrIni 0,30 (79 %)', () => {
+    const r = emergenceDepletion(120, soil, 0.95, 0.3);
+    expect(r.emergenceDepletionMm).toBeCloseTo(37.9, 1);
+    expect(r.emergenceDepletionPct).toBeCloseTo(78.9, 0);
+  });
+  it('sem spin-up ⇒ 0', () => {
+    expect(emergenceDepletion(0, soil, 0.95, 0.3)).toEqual({ emergenceDepletionMm: 0, emergenceDepletionPct: 0 });
   });
 });
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Roteiro de ponta a ponta do processamento MSA por safra.
-# Insere 150 dias sintéticos (syntheticSeason(150, 2026)) para a célula do talhão
+# Insere a série sintética de 2025-02-01 (início do spin-up) a 2026-03-30 (syntheticSeason(423, 2026, '2025-02-01')) para a célula do talhão
 # de teste, processa, consulta, confere a predição de produtividade. Pré-requisitos: ver README.md.
 set -u
 cd "$(dirname "$0")/../../.."
@@ -15,7 +15,8 @@ REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2-)
 purge_queues()   { for q in era5-ingest msa-process; do docker compose exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" EVAL "local n=0 for _,k in ipairs(redis.call('keys', ARGV[1])) do redis.call('del', k) n=n+1 end return n" 0 "bull:$q:*" >/dev/null 2>&1; done; }
 pause_workers()  { docker compose stop worker etl >/dev/null 2>&1; }
 resume_workers() { purge_queues; docker compose start worker etl >/dev/null 2>&1; }
-EMERGENCE=2025-11-01   # início fixo da série sintética (SYNTHETIC_SEASON_START)
+EMERGENCE=2025-11-01   # emergência; o balanço começa em PRE_FROM (último 1º de fevereiro)
+PRE_FROM=2025-02-01
 
 sql()   { docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$0"' "$1"; }
 j()     { node -e 'let o;try{o=JSON.parse(require("fs").readFileSync(0,"utf8"))}catch{o={}};const v=process.argv[1].split(".").reduce((a,k)=>a==null?a:a[k],o);console.log(v===undefined?"":typeof v==="object"?JSON.stringify(v):v)' "$1"; }
@@ -50,15 +51,15 @@ check "expectedYield 65 na safra" 65 "$(echo "$BODY" | j expectedYield)"
 check "criação enfileira o MSA (msaJobId)" 1 "$( [ -n "$(echo "$BODY" | j msaJobId)" ] && echo 1 || echo 0 )"
 call POST /harvests "$ANA" "{\"fieldId\":\"$F2\",\"cultivarId\":\"$SOJA\",\"emergenceDate\":\"$EMERGENCE\",\"season\":\"2025/26\"}"; H2=$(echo "$BODY" | j id)
 
-echo "== Série sintética (150 dias) via SQL para a célula =="
+echo "== Série sintética (2025-02-01 … 2026-03-30, 423 dias) via SQL para a célula =="
 (cd backend && node -e '
 require("ts-node").register({transpileOnly:true});
 const {syntheticSeason}=require("./src/modules/msa/synthetic-season");
 const [lat,lon]=[process.argv[1],process.argv[2]];
-const rows=syntheticSeason(150,2026).map(d=>`('"'"'${d.date}'"'"',${lat},${lon},${d.tmax},${d.tmin},${((d.tmax+d.tmin)/2)},${d.tdew},${d.u2},${d.rn},${d.precipitation},${d.precipitation},false,'"'"'synthetic'"'"')`);
+const rows=syntheticSeason(423,2026,"2025-02-01").map(d=>`('"'"'${d.date}'"'"',${lat},${lon},${d.tmax},${d.tmin},${((d.tmax+d.tmin)/2)},${d.tdew},${d.u2},${d.rn},${d.precipitation},${d.precipitation},false,'"'"'synthetic'"'"')`);
 console.log("INSERT INTO era5_daily_data (time,cell_lat,cell_lon,t2m_max,t2m_min,t2m_mean,d2m_mean,u2,rn,tp_raw,tp_corrected,qm_applied,source) VALUES\n"+rows.join(",\n")+"\nON CONFLICT (time,cell_lat,cell_lon) DO UPDATE SET t2m_max=EXCLUDED.t2m_max,t2m_min=EXCLUDED.t2m_min,t2m_mean=EXCLUDED.t2m_mean,d2m_mean=EXCLUDED.d2m_mean,u2=EXCLUDED.u2,rn=EXCLUDED.rn,tp_raw=EXCLUDED.tp_raw,tp_corrected=EXCLUDED.tp_corrected,source=EXCLUDED.source;");' -- "$CELL_LAT" "$CELL_LON") > "$S/insert.sql"
 docker compose exec -T db sh -c 'psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$S/insert.sql"
-check "150 dias sintéticos na célula" 150 "$(sql "SELECT count(*) FROM era5_daily_data WHERE cell_lat=$CELL_LAT AND cell_lon=$CELL_LON AND source='synthetic'")"
+check "423 dias sintéticos na célula" 423 "$(sql "SELECT count(*) FROM era5_daily_data WHERE cell_lat=$CELL_LAT AND cell_lon=$CELL_LON AND source='synthetic'")"
 LAST_SYN=$(sql "SELECT max(time) FROM era5_daily_data WHERE source='synthetic'")
 
 echo "== Processamento (assíncrono por padrão; síncrono só para ADMIN via ?sync=true) =="
@@ -75,13 +76,16 @@ check "reason MANUAL, sem jobId" "MANUAL|null" "$(echo "$BODY" | j run.reason)|$
 RUN1=$(echo "$BODY" | j run.id)
 check "status SUCCEEDED" SUCCEEDED "$(echo "$BODY" | j run.status)"
 lacks "run sem seed/iterações/sigmas" "$BODY" '"seed"'
-check "engineVersion" 2.1.0 "$(echo "$BODY" | j run.engineVersion)"
+check "engineVersion" 2.2.0 "$(echo "$BODY" | j run.engineVersion)"
+check "dateFrom/preSeasonFrom = 1º de fevereiro" "$PRE_FROM|$PRE_FROM" "$(echo "$BODY" | j run.dateFrom)|$(echo "$BODY" | j run.preSeasonFrom)"
+check "Kc e Zr da entressafra gravados" "1|0.95" "$(echo "$BODY" | j run.preSeasonKc)|$(echo "$BODY" | j run.preSeasonZr)"
+EDP=$(echo "$BODY" | j run.emergenceDepletionPct); echo "      depleção na emergência: $(echo "$BODY" | j run.emergenceDepletionMm) mm ($EDP %)"
+check "entressafra seca ⇒ depleção na emergência > 0 e ≤ 100" 1 "$(node -e "console.log(($EDP>0&&$EDP<=100)?1:0)")"
 YI=$(echo "$BODY" | j run.yieldIndex); PY=$(echo "$BODY" | j run.predictedYield); echo "      yieldIndex = $YI · predictedYield = $PY sc/ha"
 check "expectedYield da run = Ym da safra" 65 "$(echo "$BODY" | j run.expectedYield)"
 check "phasesReached 4" 4 "$(echo "$BODY" | j run.phasesReached)"
 check "índice em (0, 1]" 1 "$(node -e "console.log(($YI>0&&$YI<=1)?1:0)")"
-check "predita = Ym × índice" "$(node -e "console.log(65*$YI)")" "$PY"
-check "dateFrom = emergência" "$EMERGENCE" "$(echo "$BODY" | j run.dateFrom)"
+check "predita = Ym × índice (6 casas)" "$(node -e "console.log((65*$YI).toFixed(6))")" "$(node -e "console.log(Number(process.argv[1]).toFixed(6))" "$PY")"
 TO1=$(echo "$BODY" | j run.dateTo); echo "      dateTo (GDA atinge gdaTotal): $TO1 (série vai até $LAST_SYN)"
 check "ciclo encerra antes do fim da série" 1 "$( [ "$TO1" \< "$LAST_SYN" ] && echo 1 || echo 0 )"
 check "snapshot da cultivar com 16 parâmetros (tUpper) + id" "1200|1.15|30|$SOJA" "$(echo "$BODY" | j run.cultivarSnapshot.gdaTotal)|$(echo "$BODY" | j run.cultivarSnapshot.kcMid)|$(echo "$BODY" | j run.cultivarSnapshot.tUpper)|$(echo "$BODY" | j run.cultivarSnapshot.id)"
@@ -99,17 +103,26 @@ echo "== Consultas =="
 call GET "/harvests/$H/msa" "$PEDRO";          check "produtor lê o último → 200" 200 "$STATUS"; check "é a run 1" "$RUN1" "$(echo "$BODY" | j run.id)"
 check "cultivarChangedSinceRun false" false "$(echo "$BODY" | j cultivarChangedSinceRun)"
 check "predita na consulta" "$PY" "$(echo "$BODY" | j run.predictedYield)"
-call GET "/harvests/$H/msa/daily" "$PEDRO";    check "série diária → 200" 200 "$STATUS"; check "N dias" "$N_DAILY" "$(echo "$BODY" | j days.length)"; check "primeiro dia" "$EMERGENCE" "$(echo "$BODY" | j days.0.date)"
+call GET "/harvests/$H/msa/daily" "$PEDRO";    check "série diária (sem entressafra) → 200" 200 "$STATUS"; check "primeiro dia = emergência" "$EMERGENCE" "$(echo "$BODY" | j days.0.date)"; lacks "sem PRE por padrão" "$BODY" '"phase":"PRE"'
+N_CROP=$(echo "$BODY" | j days.length)
+call GET "/harvests/$H/msa/daily?includePreSeason=true" "$PEDRO"; check "série com entressafra → 200" 200 "$STATUS"; check "primeiro dia = 1º de fevereiro, PRE, gda 0" "$PRE_FROM|PRE|0" "$(echo "$BODY" | j days.0.date)|$(echo "$BODY" | j days.0.phase)|$(echo "$BODY" | j days.0.gda)"
+check "série completa = cultura + entressafra" "$N_DAILY" "$(echo "$BODY" | j days.length)"; check "dias de cultura < total" 1 "$( [ "$N_CROP" -lt "$N_DAILY" ] && echo 1 || echo 0 )"
+call GET "/harvests/$H/msa/daily?includePreSeason=sim" "$PEDRO"; check "includePreSeason inválido → 400" 400 "$STATUS"; contains "aponta includePreSeason" "$BODY" '"includePreSeason"'
 call GET "/harvests/$H/msa/daily?runId=00000000-0000-4000-8000-000000000000" "$ANA"; check "run de outra safra/inexistente → 404" 404 "$STATUS"
 call GET "/harvests/$H/msa/runs" "$ANA";       check "histórico com 1 run" 1 "$(echo "$BODY" | j length)"
 call GET "/harvests/$H/msa" "$ADMIN";          check "admin lê → 200" 200 "$STATUS"
+
+echo "== Lacuna na entressafra ⇒ NEEDS_DATA =="
+sql "DELETE FROM era5_daily_data WHERE source='synthetic' AND time IN ('2025-06-10','2025-06-11')" >/dev/null
+call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "lacuna em junho → 200 NEEDS_DATA" 200 "$STATUS"; check "missingDates de junho" '["2025-06-10","2025-06-11"]' "$(echo "$BODY" | j run.missingDates)"
+docker compose exec -T db sh -c 'psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$S/insert.sql"   # repõe os dias
 
 echo "== Lacuna ⇒ NEEDS_DATA =="
 sql "DELETE FROM era5_daily_data WHERE source='synthetic' AND time IN ('2025-11-15','2025-11-16')" >/dev/null
 call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "com lacuna → 200" 200 "$STATUS"; check "status NEEDS_DATA" NEEDS_DATA "$(echo "$BODY" | j run.status)"
 check "missingDates" '["2025-11-15","2025-11-16"]' "$(echo "$BODY" | j run.missingDates)"
 check "latestRunId inalterado" "$RUN1" "$(sql "SELECT latest_run_id FROM harvests WHERE id='$H'")"
-call GET "/harvests/$H/msa/runs" "$ANA";       check "histórico com 2 runs" 2 "$(echo "$BODY" | j length)"; check "mais recente primeiro" NEEDS_DATA "$(echo "$BODY" | j 0.status)"
+call GET "/harvests/$H/msa/runs" "$ANA";       check "histórico com 3 runs" 3 "$(echo "$BODY" | j length)"; check "mais recente primeiro" NEEDS_DATA "$(echo "$BODY" | j 0.status)"
 echo "== Lacuna após o fim do ciclo não bloqueia =="
 docker compose exec -T db sh -c 'psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$S/insert.sql"   # repõe os dias
 AFTER=$(sql "SELECT (date '$TO1' + 3)::text"); sql "DELETE FROM era5_daily_data WHERE source='synthetic' AND time = '$AFTER'" >/dev/null
@@ -132,7 +145,7 @@ check "latestRunId = run mais recente SUCCEEDED" "$(echo "$BODY" | j run.id)" "$
 echo "== Ym alterada depois da run não recalcula =="
 call PATCH "/harvests/$H" "$ANA" '{"expectedYield":70}'; check "PATCH expectedYield 70 → 200" 200 "$STATUS"; check "safra com 70" 70 "$(echo "$BODY" | j expectedYield)"
 call GET "/harvests/$H/msa" "$ANA"; check "run mantém expectedYield 65" 65 "$(echo "$BODY" | j run.expectedYield)"; check "run mantém predita" "$PY" "$(echo "$BODY" | j run.predictedYield)"
-call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "nova run usa 70" 70 "$(echo "$BODY" | j run.expectedYield)"; check "predita = 70 × índice" "$(node -e "console.log(70*$YI)")" "$(echo "$BODY" | j run.predictedYield)"
+call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "nova run usa 70" 70 "$(echo "$BODY" | j run.expectedYield)"; check "predita = 70 × índice (6 casas)" "$(node -e "console.log((70*$YI).toFixed(6))")" "$(node -e "console.log(Number(process.argv[1]).toFixed(6))" "$(echo "$BODY" | j run.predictedYield)")"
 
 echo "== Safra sem Ym e cultivar alterada desde a run =="
 call POST "/properties/$P/fields" "$ANA" "{\"name\":\"T-MSA-2\",\"geometry\":$SQ,\"altitudeM\":741}"; F3=$(echo "$BODY" | j id)
@@ -145,6 +158,14 @@ call PATCH "/cultivars/$C" "$ANA" '{"kcMid":1.1}'; check "edita cultivar em uso 
 call GET "/harvests/$H3/msa" "$PEDRO"; check "cultivarChangedSinceRun true" true "$(echo "$BODY" | j cultivarChangedSinceRun)"; check "snapshot da run intacto" 1.15 "$(echo "$BODY" | j run.cultivarSnapshot.kcMid)"
 call POST "/harvests/$H3/msa/process?sync=true" "$ADMIN"; check "run nova usa 1.1" 1.1 "$(echo "$BODY" | j run.cultivarSnapshot.kcMid)"
 call GET "/harvests/$H3/msa" "$PEDRO"; check "após reprocessar, false" false "$(echo "$BODY" | j cultivarChangedSinceRun)"
+
+echo "== Emergência dentro do lag (safra criada 3 dias depois) =="
+RECENT=$(date -u -v-3d +%F 2>/dev/null || date -u -d '-3 days' +%F)
+call POST "/properties/$P/fields" "$ANA" "{\"name\":\"T-recente\",\"geometry\":$SQ,\"altitudeM\":741}"; F4=$(echo "$BODY" | j id)
+call POST /harvests "$ANA" "{\"fieldId\":\"$F4\",\"cultivarId\":\"$SOJA\",\"emergenceDate\":\"$RECENT\",\"season\":\"2026/27\"}"; H4=$(echo "$BODY" | j id); check "safra recente → 201" 201 "$STATUS"
+call POST "/harvests/$H4/msa/process?sync=true" "$ADMIN"; check "emergência no lag → 200 NEEDS_DATA" 200 "$STATUS"; check "missingDates = [emergência]" "[\"$RECENT\"]" "$(echo "$BODY" | j run.missingDates)"
+check "nenhum dia PRE gravado" 0 "$(sql "SELECT count(*) FROM msa_daily_results d JOIN msa_runs r ON r.id = d.run_id WHERE r.harvest_id='$H4'")"
+call GET "/harvests/$H4/msa" "$ANA"; check "GET /msa continua 404" 404 "$STATUS"
 
 echo "== Rotas de decisão removidas =="
 call GET "/harvests/$H/msa/decision?phase=F3&doseBase=100&efficiencyBase=0.6" "$ANA"; check "GET /msa/decision → 404" 404 "$STATUS"

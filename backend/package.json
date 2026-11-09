@@ -20,7 +20,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "msa:validate-et0": "ts-node --transpile-only scripts/validation/et0-validate.ts",
-    "msa:validate-gda": "ts-node --transpile-only scripts/validation/gda-validate.ts"
+    "msa:validate-gda": "ts-node --transpile-only scripts/validation/gda-validate.ts",
+    "msa:validate-preseason": "ts-node --transpile-only scripts/validation/preseason-validate.ts"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"

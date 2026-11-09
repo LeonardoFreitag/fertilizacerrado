@@ -7,12 +7,14 @@ import { ApiError } from '@/lib/api/client';
 import { messageFor } from '@/lib/api/errors';
 import type { HarvestResponse, RunView } from '@/lib/api/types';
 import { useSession } from '@/lib/auth/session';
-import { formatDate, formatDateTime } from '@/lib/msa/msa';
+import { formatDateTime } from '@/lib/msa/msa';
 import { MsaCharts } from './MsaCharts';
 import { MsaHeader } from './MsaHeader';
 import { PhaseCards } from './PhaseCards';
 import { PhaseTimeline } from './PhaseTimeline';
+import { MissingDates } from './MissingDates';
 import { RunsTable } from './RunsTable';
+import { SoilWaterAtEmergence } from './SoilWaterAtEmergence';
 import { YieldSummary } from './YieldSummary';
 import { useDailySeries, useJob, useMsaLatest, useMsaRuns, useProcessHarvest } from './api';
 import { useMsaPolling } from './useMsaPolling';
@@ -63,8 +65,13 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const viewingRunId = selectedRunId ?? latest.data?.run.id;
-  const daily = useDailySeries(harvest.id, viewingRunId);
   const selectedRun: RunView | undefined = useMemo(() => runs.data?.find((r) => r.id === viewingRunId) ?? latest.data?.run, [runs.data, viewingRunId, latest.data]);
+  // Série de cultura (linha do tempo, cartões) e, sob demanda, a série com entressafra (gráficos).
+  const daily = useDailySeries(harvest.id, viewingRunId);
+  const [showPreSeason, setShowPreSeason] = useState(false);
+  const hasPreSeason = selectedRun?.preSeasonFrom != null;
+  const dailyFull = useDailySeries(harvest.id, viewingRunId, true, showPreSeason && hasPreSeason);
+  const chartDays = showPreSeason && hasPreSeason ? dailyFull.data?.days : daily.data?.days;
 
   async function reprocess() {
     try {
@@ -96,8 +103,7 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
               Última tentativa em {formatDateTime(lastRun.startedAt)}: <strong>{lastRun.status}</strong>
               {lastRun.status === 'NEEDS_DATA' && lastRun.missingDates && (
                 <p className="mt-1">
-                  Faltam dados ERA5-Land para {lastRun.missingDates.length} dia(s): {lastRun.missingDates.slice(0, 8).map(formatDate).join(', ')}
-                  {lastRun.missingDates.length > 8 && '…'}. A ingestão semanal completa a série; reprocessar depois.
+                  <MissingDates dates={lastRun.missingDates} />. A ingestão semanal (ou o backfill da célula desde fevereiro) completa a série; reprocessar depois.
                 </p>
               )}
               {lastRun.status === 'FAILED' && <p className="mt-1 text-red-700">{lastRun.error}</p>}
@@ -116,7 +122,7 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
       {latest.data && (
         <>
           <ErrorBoundary title="Cabeçalho do MSA indisponível.">
-          <MsaHeader latest={latest.data} harvest={harvest} canManage={canManage} onReprocess={reprocess} reprocessing={process.isPending || (!!watch && polling.state === 'waiting')} lastRun={lastRun} series={daily.data?.days} />
+          <MsaHeader latest={latest.data} harvest={harvest} canManage={canManage} onReprocess={reprocess} reprocessing={process.isPending || (!!watch && polling.state === 'waiting')} lastRun={lastRun} series={chartDays} />
           </ErrorBoundary>
           {selectedRun && (
             <ErrorBoundary title="Produtividade indisponível.">
@@ -126,6 +132,7 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
                 currentPhase={selectedRunId && selectedRunId !== latest.data.run.id ? (daily.data?.days.at(-1)?.phase ?? null) : latest.data.currentPhase}
                 harvest={harvest}
                 canManage={canManage}
+                extra={<SoilWaterAtEmergence run={selectedRun} harvest={harvest} canManage={canManage} onReprocess={reprocess} />}
               />
             </ErrorBoundary>
           )}
@@ -139,11 +146,13 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
           </ErrorBoundary>
           {daily.isPending && <LoadingState label="Carregando a série diária…" />}
           {daily.isError && <ErrorState error={daily.error} onRetry={() => daily.refetch()} />}
-          {daily.data && selectedRun && (
+          {showPreSeason && hasPreSeason && dailyFull.isPending && <LoadingState label="Carregando a entressafra…" />}
+          {chartDays && selectedRun && (
             <ErrorBoundary title="Gráficos indisponíveis.">
               <MsaCharts
-                days={daily.data.days}
+                days={chartDays}
                 banner={selectedRunId && selectedRunId !== latest.data.run.id ? { text: `Visualizando run de ${formatDateTime(selectedRun.startedAt)}`, onReset: () => setSelectedRunId(null) } : null}
+                preSeason={{ available: hasPreSeason, enabled: showPreSeason && hasPreSeason, onToggle: () => setShowPreSeason((v) => !v) }}
               />
             </ErrorBoundary>
           )}

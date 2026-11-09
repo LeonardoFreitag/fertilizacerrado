@@ -65,9 +65,12 @@ describe('invariantes do motor com entradas aleatórias (semente fixa)', () => {
       const cultivar = randomCultivar(rand);
       const soil = randomSoil(rand);
       const days = randomSeries(rand, 20 + Math.floor(rand() * 150));
+      // Metade dos casos com entressafra: emergência em algum dia da série, Kc e Zr plausíveis.
+      const preSeason = rand() < 0.5 ? undefined : { until: days[Math.floor(rand() * days.length)]!.date, kc: uniform(rand, 0.3, 1.2), zr: rand() < 0.5 ? cultivar.zrMax : cultivar.zrIni };
       const rows = runDailyBalance(days, cultivar, soil, {
         altitude: uniform(rand, 0, 1500),
         initialDepletion: rand() < 0.5 ? 0 : uniform(rand, 0, 60),
+        preSeason,
       });
 
       let prevZr = -Infinity;
@@ -78,14 +81,19 @@ describe('invariantes do motor com entradas aleatórias (semente fixa)', () => {
         expect(row.etcAdj).toBeLessThanOrEqual(row.etc + 1e-12);
         expect(row.dr).toBeGreaterThanOrEqual(0);
         expect(row.dr).toBeLessThanOrEqual(row.taw + 1e-9);
-        expect(row.zr).toBeGreaterThanOrEqual(prevZr);
+        if (row.phase !== 'PRE') expect(row.zr).toBeGreaterThanOrEqual(prevZr);
         expect(row.gdaAccum).toBeGreaterThanOrEqual(prevGda);
         expect(row.gda).toBeGreaterThanOrEqual(0);
+        if (row.phase === 'PRE') {
+          expect(row.gda).toBe(0);
+          expect(row.gdaAccum).toBe(0);
+          expect(row.kc).toBe(preSeason!.kc);
+        }
         if (cultivar.tUpper !== null) expect(row.gda).toBeLessThanOrEqual(cultivar.tUpper - cultivar.tBase + 1e-9);
         expect(row.et0).toBeGreaterThanOrEqual(0);
         expect(row.raw).toBeLessThanOrEqual(row.taw);
         expect(Number.isFinite(row.et0 + row.etc + row.etcAdj + row.dr)).toBe(true);
-        prevZr = row.zr;
+        prevZr = row.phase === 'PRE' ? -Infinity : row.zr; // Zr da entressafra (zrMax) pode ser maior que zrIni
         prevGda = row.gdaAccum;
         rowsChecked++;
       }

@@ -2,7 +2,7 @@
   "field1AreaHa": 21.51,
   "harvest2": {
     "status": "NEEDS_DATA",
-    "missingDays": 3
+    "missingDays": 23
   },
   "rainCorrected": false,
   "csvFile": "serie-diaria-talhao-1-sede-2025-26-<run>.csv",
@@ -13,7 +13,7 @@
     "lon": -49.3
   },
   "run": {
-    "dateFrom": "2025-10-01",
+    "dateFrom": "2025-02-01",
     "dateTo": "2025-12-17"
   },
   "currentPhase": "COMPLETED",
@@ -21,45 +21,55 @@
     {
       "phase": "F1",
       "days": 7,
-      "ksMean": 1,
-      "yieldReductionPct": 0,
-      "etcAdjAccum": 9.204790014817961,
+      "ksMean": 0.6040673886023352,
+      "yieldReductionPct": 7.918652227953296,
+      "etcAdjAccum": 5.44948168057795,
       "precipAccum": 0.009873507699999999
     },
     {
       "phase": "F2",
       "days": 20,
-      "ksMean": 1,
-      "yieldReductionPct": 0,
-      "etcAdjAccum": 73.66187027692762,
+      "ksMean": 0.926128933447132,
+      "yieldReductionPct": 5.909685324229441,
+      "etcAdjAccum": 68.28146423286456,
       "precipAccum": 20.857073253
     },
     {
       "phase": "F3",
       "days": 29,
-      "ksMean": 0.8588347534028169,
-      "yieldReductionPct": 14.11652465971831,
-      "etcAdjAccum": 141.2533285576581,
+      "ksMean": 0.6878662081200736,
+      "yieldReductionPct": 31.21337918799264,
+      "etcAdjAccum": 113.4249768328958,
       "precipAccum": 124.3891826973
     },
     {
       "phase": "F4",
       "days": 21,
-      "ksMean": 0.9168754032695189,
-      "yieldReductionPct": 3.324983869219245,
-      "etcAdjAccum": 61.08469273888367,
+      "ksMean": 0.8943169134729592,
+      "yieldReductionPct": 4.227323461081633,
+      "etcAdjAccum": 58.88027314860733,
       "precipAccum": 110.11197571
     }
   ],
   "yield": {
     "ym": 65,
-    "yieldIndex": 0.8302786363889244,
-    "predictedYield": 53.96811136528009,
+    "yieldIndex": 0.5707713796232895,
+    "predictedYield": 37.10013967551382,
     "phasesReached": 4,
     "ymText": "65,0 sc/ha",
-    "yieldIndexPct": "83,0 %",
-    "predicted": "54,0 sc/ha",
+    "yieldIndexPct": "57,1 %",
+    "predicted": "37,1 sc/ha",
     "partial": false
+  },
+  "soilWater": {
+    "preSeasonFrom": "2025-02-01",
+    "preSeasonKc": 1,
+    "preSeasonZr": 0.95,
+    "depletionMm": 41.7892604613344,
+    "depletionPct": 87.06095929444666,
+    "headline": "O talhão entrou na safra com 13 % da água disponível",
+    "depletionText": "41,8 de 48,0 mm esgotados",
+    "rainText": "35,8 mm"
   },
   "images": [
     "01-01-entrar",
@@ -125,6 +135,8 @@
     "06-09-grafico-ks",
     "06-10-detalhe-do-dia",
     "06-11-produtividade",
+    "06-12-agua-no-solo",
+    "06-13-entressafra-nos-graficos",
     "06-18-exportar",
     "06-19-historico",
     "06-20-reprocessar",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { csvCell, slug, toCsv } from './csv';
 import type { PhaseView } from '../api/types';
-import { formatIndexPct, formatMm, formatPct, formatScHa, phaseRanges, severity, suggestSeason, summariesCsv, yieldSummaryRows, yieldWarnings } from './msa';
+import { formatIndexPct, formatMm, formatPct, formatScHa, groupMissingDates, phaseRanges, preSeasonRange, rainBeforeEmergence, severity, soilWaterTexts, suggestSeason, summariesCsv, yieldSummaryRows, yieldWarnings } from './msa';
 
 describe('severity', () => {
   it('limiares 0,85 e 0,70', () => {
@@ -54,6 +54,46 @@ describe('phaseRanges', () => {
 
   it('série vazia', () => {
     expect(phaseRanges([])).toEqual({ ranges: [], pending: ['F1', 'F2', 'F3', 'F4'], cycleStart: null, cycleEnd: null, totalDays: 0 });
+  });
+
+  it('dias PRE ficam fora da linha do tempo e viram a faixa de entressafra', () => {
+    const rows = series([['PRE', 5], ['F1', 10], ['F2', 5]]);
+    const t = phaseRanges(rows);
+    expect(t.cycleStart).toBe('2025-11-06');
+    expect(t.totalDays).toBe(15);
+    expect(t.ranges.map((r) => r.phase)).toEqual(['F1', 'F2']);
+    expect(preSeasonRange(rows)).toEqual({ start: '2025-11-01', end: '2025-11-05', days: 5 });
+    expect(preSeasonRange(series([['F1', 3]]))).toBeNull();
+  });
+});
+
+describe('entressafra — funções do cartão', () => {
+  const days = Array.from({ length: 60 }, (_, i) => ({ date: new Date(Date.UTC(2025, 8, 2 + i)).toISOString().slice(0, 10), precipitation: i % 10 === 0 ? 12 : 0 }));
+
+  it('chuva dos 30 dias anteriores à emergência (exclusive)', () => {
+    // emergência 2025-11-01: janela 2025-10-02 … 2025-10-31 → dias com i%10===0 nessa faixa: i=30,40,50 → 36 mm
+    expect(rainBeforeEmergence(days, '2025-11-01')).toBe(36);
+    expect(rainBeforeEmergence([], '2025-11-01')).toBe(0);
+  });
+
+  it('groupMissingDates: por extenso até 14, agrupado por mês acima', () => {
+    const few = groupMissingDates(['2025-11-16', '2025-11-15']);
+    expect(few).toEqual({ grouped: false, groups: [], dates: ['15/11/2025', '16/11/2025'], total: 2 });
+    const many: string[] = [];
+    for (let d = new Date(Date.UTC(2025, 1, 1)); d < new Date(Date.UTC(2025, 3, 3)); d = new Date(d.getTime() + 86_400_000)) many.push(d.toISOString().slice(0, 10));
+    const g = groupMissingDates(many);
+    expect(g.grouped).toBe(true);
+    expect(g.total).toBe(61);
+    expect(g.groups.map((x) => x.label)).toEqual(['fev/2025: 28 dias', 'mar/2025: 31 dias', 'abr/2025: 2 dias']);
+    expect(g.dates).toHaveLength(61);
+  });
+
+  it('soilWaterTexts: frase, mm e período; null em run antiga', () => {
+    const t = soilWaterTexts({ emergenceDepletionPct: 35, emergenceDepletionMm: 16.8, preSeasonFrom: '2025-02-01', preSeasonKc: 1, preSeasonZr: 0.95 }, '2025-11-01', 48)!;
+    expect(t.headline).toBe('O talhão entrou na safra com 65 % da água disponível');
+    expect(t.depletion).toBe('16,8 de 48,0 mm esgotados');
+    expect(t.period).toBe('entressafra 01/02/2025 → 31/10/2025 (Kc 1,00, Zr 0,95 m)');
+    expect(soilWaterTexts({ emergenceDepletionPct: null, emergenceDepletionMm: null, preSeasonFrom: null, preSeasonKc: null, preSeasonZr: null }, '2025-11-01', 48)).toBeNull();
   });
 });
 

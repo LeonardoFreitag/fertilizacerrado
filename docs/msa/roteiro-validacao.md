@@ -23,7 +23,7 @@ estará.
 |---|---|---|---|---|
 | 0 | O ambiente está pronto? | — | testes automatizados | pronta |
 | 1 | A ET₀ calculada está correta? | MSA × CROPWAT 8.0 | `pnpm msa:validate-et0` | pronta |
-| 2 | O balanço hídrico diário está correto? A produtividade predita se aproxima da colhida? | MSA × CROPWAT 8.0; predita × observada | exportação + planilha | parcial (sem script) |
+| 2 | O balanço hídrico diário está correto? A produtividade predita se aproxima da colhida? Com quanta água o talhão entrou na safra? | MSA × CROPWAT 8.0; predita × observada; depleção na emergência × Thornthwaite-Mather | exportação + planilha; `pnpm msa:validate-preseason` | parcial (sem script para Dr/Ks) |
 | 4 | A correção de viés melhora a chuva do ERA5? | ERA5 bruto e corrigido × INMET | `etl qm validate` | pronta; faltam dados reais |
 | 5 | Os resultados são reproduzíveis? | run original × reprocessamento | painel + exportação | pronta |
 | 6 | Quanto o método de graus-dia desloca as janelas F1–F4? | residual × Ometto × Ometto com TB | `pnpm msa:validate-gda` | pronta (descritiva, sem critério) |
@@ -287,7 +287,7 @@ Uma safra de soja com:
 
 - talhão com polígono, altitude, capacidade de campo e ponto de murcha informados;
 - data de emergência conhecida;
-- série ERA5-Land completa no período (o painel não pode estar em "Dados insuficientes");
+- série ERA5-Land completa no período — **inclusive a entressafra**, desde o 1º de fevereiro anterior à emergência, pois é aí que o balanço começa desde o motor 2.2.0 (o painel não pode estar em "Sem processamento do MSA");
 - de preferência, chuva já corrigida (selo "Chuva corrigida" no painel, depois da Fase 4);
 - para o passo 2.5, **produtividade potencial** (Ym, sc/ha) informada na safra
   ("Produtividade potencial (sc/ha)", no cadastro ou na edição da safra) e a
@@ -297,7 +297,11 @@ Uma safra de soja com:
 ### 2.2 Exportar do MSA
 
 **a) Resultado do balanço.** No painel da safra (`/safras/<id>`), botão
-**Exportar CSV → Série diária**. Colunas (separador `;`, vírgula decimal):
+**Exportar série diária**. Por padrão o arquivo traz só os dias de cultura (da
+emergência em diante); com a caixa **Mostrar entressafra** marcada, acima dos
+gráficos, ele inclui também os dias da entressafra com `Fase = PRE` — exporte
+**as duas versões** (a segunda serve ao passo 2.6). Colunas (separador `;`,
+vírgula decimal):
 
 ```
 Data;Fase;GDA do dia;GDA acumulado;Zr (m);ET0 (mm);Kc;ETc (mm);Chuva (mm);Dr (mm);Ks;ETc ajustada (mm);TAW (mm);RAW (mm)
@@ -315,7 +319,7 @@ pnpm db:shell
               d2m_mean AS tdew, u2, rn, tp_corrected AS precipitation
        FROM era5_daily_data
        WHERE cell_lat = -16.7 AND cell_lon = -49.3
-         AND time BETWEEN '2025-10-01' AND '2026-02-28'
+         AND time BETWEEN '2025-02-01' AND '2026-02-28'
        ORDER BY time) TO '/tmp/safra-clima.csv' CSV HEADER
 \q
 ```
@@ -328,11 +332,13 @@ Formato resultante:
 
 ```csv
 date,tmax,tmin,tmean,tdew,u2,rn,precipitation
-2025-10-01,33.1,19.8,26.2,14.9,1.71,10.9,0
+2025-02-01,30.4,20.1,24.6,19.2,1.35,12.8,6.4
 ...
 ```
 
-> **Ilustrativo** quanto aos valores.
+> **Ilustrativo** quanto aos valores. O intervalo começa em 1º de fevereiro
+> para cobrir a entressafra (passo 2.6); para o CROPWAT (2.3) use só os dias da
+> emergência em diante.
 
 ### 2.3 Rodar no CROPWAT
 
@@ -343,8 +349,11 @@ date,tmax,tmin,tmean,tdew,u2,rn,precipitation
    p = 0,50, Zr 0,30 → 0,95 m, durações das fases tiradas das datas F1–F4 da
    linha do tempo do painel).
 3. **Soil:** água disponível total = 1000 × (θFC − θWP) mm/m. Com os padrões
-   0,28 e 0,12, são 160 mm/m. Depleção inicial = 0 (solo na capacidade de campo),
-   como no MSA.
+   0,28 e 0,12, são 160 mm/m. **Depleção inicial = a depleção na emergência
+   calculada pelo MSA** — o valor "X de Y mm esgotados" do cartão **Água no solo
+   na emergência** (bloco Produtividade), ou `emergenceDepletionMm` em
+   `GET /harvests/<id>/msa` —, para que os dois balanços partam do mesmo ponto.
+   (Antes do motor 2.2.0 esse valor era 0, solo na capacidade de campo.)
 4. Gere a tabela diária do balanço (**Irrigation Schedule**, opção sem irrigação)
    e exporte para planilha.
 
@@ -401,6 +410,72 @@ sem faixa de incerteza; a discussão da dissertação deve tratar isso como limi
 **Para a dissertação:** tabela por janela (dias, Ks̄, Ky, Ky · (1 − Ks̄), fator) do
 talhão escolhido e a tabela predita × observada com o erro relativo, uma linha por
 safra histórica.
+
+### 2.6 Depleção na emergência × Thornthwaite-Mather
+
+Desde o motor 2.2.0 o balanço não começa na emergência com o solo cheio: começa
+no 1º de fevereiro anterior, atravessa a entressafra sem cultura (Kc 1,0, Zr 0,95 m
+por padrão) e chega à emergência com a depleção **calculada** (`algoritmos.md` §5).
+Este passo confere esse valor contra o balanço climatológico clássico e mede
+quanto ele depende do Kc da entressafra (questão aberta nº 11). É **descritivo**:
+não há critério de aceitação.
+
+**a) Anotar o que o MSA calculou.** No bloco **Produtividade** do painel, cartão
+**Água no solo na emergência**: a frase "O talhão entrou na safra com N % da água
+disponível", "Depleção na emergência: X de Y mm esgotados", "Chuva nos 30 dias
+anteriores" e "Período do balanço: entressafra 01/02/AAAA → véspera (Kc, Zr)".
+Os mesmos números vêm em `GET /harvests/<id>/msa` (`emergenceDepletionMm`,
+`emergenceDepletionPct`, `preSeasonFrom`, `preSeasonKc`, `preSeasonZr`).
+
+**b) Thornthwaite-Mather na planilha.** Use o CSV da série diária exportado **com
+"Mostrar entressafra" ligado** (passo 2.2a): as linhas `Fase = PRE` trazem a ET₀
+e a chuva de cada dia da entressafra. Numa planilha, com a data na coluna A, a
+chuva P em B, a ET₀ em C (com Kc 1,0 a ETP é a própria ET₀; para outro Kc,
+multiplique) e `CAD` numa célula fixa (ex.: `$H$1` = 1000 × (θFC − θWP) × Zr_max;
+com os padrões 160 × 0,95 = **152 mm**), monte, a partir da linha 2 (1º de
+fevereiro, armazenamento inicial `ARM` = CAD):
+
+| Coluna | Fórmula (linha n, Excel em português) | Significado |
+|---|---|---|
+| D — P − ETP | `=Bn-Cn` | saldo do dia |
+| E — negativo acumulado | `=SE(Dn<0;En-1+Dn;SE(Fn-1<$H$1;$H$1*LN(Fn-1/$H$1)+Dn;0))` | memória da secagem (TM clássico) |
+| F — ARM | `=SE(Dn<0;$H$1*EXP(En/$H$1);MÍNIMO(Fn-1+Dn;$H$1))` | água armazenada no perfil |
+| G — depleção TM | `=$H$1-Fn` | compare com o Dr do MSA |
+
+Na primeira linha, `E1` = 0 e `F1` = CAD (solo cheio em 1º de fevereiro). Na
+véspera da emergência, anote a **depleção TM do perfil** (G) e compare com o `Dr`
+da última linha `PRE` do CSV do MSA (depleção do perfil antes da conversão).
+Converta as duas para a zona radicular inicial multiplicando por Zr_ini/Zr_pre
+(0,30/0,95 com os padrões) e compare com `emergenceDepletionMm`. Registre em
+`notas.md` os quatro números e a diferença. Diferenças são esperadas: o MSA
+esgota à taxa potencial até RAW e depois pelo Ks (Eq. 84 do FAO-56), enquanto TM
+esgota exponencialmente desde o início; e a hipótese de umidade uniforme na
+conversão de Zr vale para os dois.
+
+**c) Sensibilidade ao Kc da entressafra.** Na pasta `backend`:
+
+```bash
+cd backend && pnpm msa:validate-preseason -- --cell -16.7,-49.3 --emergence 2025-11-01 --out ../validacao/saida/preseason-goiania.csv
+```
+
+Troque `--cell` pela célula do talhão (ela aparece no detalhe do talhão) e
+`--emergence` pela emergência da safra. Padrões: `--soil 0.28,0.12`, `--altitude 741`,
+`--kc 0.4,0.7,1.0`, `--zr-mode zrMax`; repita com `--zr-mode zrIni` para a
+alternativa de perfil. A saída é uma tabela, por Kc, com a depleção ao fim da
+entressafra (mm e % do perfil), a depleção convertida para Zr_ini (mm e %), e a
+chuva e a ET₀ acumuladas da entressafra; `--out` grava
+`kc;zr_m;dr_pre_mm;dr_ini_mm;dr_ini_pct;chuva_mm;et0_mm`. A linha `kc = 1.0`
+deve reproduzir `emergenceDepletionMm` da run (mesma série, mesmos parâmetros).
+Em vez de `--cell`, aceita um CSV `date,tmax,tmin,tdew,u2,rn,precipitation`
+(o de `safra-clima.csv` serve).
+
+**Critério:** não há. Registre em `notas.md`, por safra: `preSeasonFrom`, Kc e Zr
+da entressafra, chuva e ET₀ acumuladas, depleção do MSA (perfil e convertida),
+depleção TM (perfil e convertida) e a tabela de sensibilidade (Kc × modo de Zr).
+
+**Para a dissertação:** gráfico da depleção do perfil ao longo da entressafra
+(MSA × TM) até a emergência, e a tabela de sensibilidade — a discussão alimenta as
+questões nº 11 e 12 de `questoes-abertas.md`.
 
 ---
 
@@ -704,7 +779,9 @@ Itens que afetam a validação e ainda precisam de decisão ou implementação:
    subestima) e o de Quantile Mapping usa Σ(S − O)/ΣO. Recomenda-se adotar Moriasi
    nos dois, como está em `validacao.md`.
 2. **Script para a Fase 2** (`msa:validate-balance`), que leia o CSV do painel e a
-   tabela do CROPWAT e calcule as métricas sem planilha.
+   tabela do CROPWAT e calcule as métricas sem planilha (o passo 2.6 já tem o
+   `msa:validate-preseason` para a sensibilidade; a comparação com
+   Thornthwaite-Mather continua em planilha).
 3. **Relatório em Python** com os gráficos previstos em `validacao.md` (dispersão
    da ET₀, séries do balanço, predita × observada, distribuições acumuladas do QM).
 4. **Limiares de aceitação.** RMSE ≤ 0,5 mm/dia, R² ≥ 0,95, NSE ≥ 0,80 e |PBIAS| ≤ 10 %
