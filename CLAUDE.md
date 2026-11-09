@@ -52,13 +52,21 @@ Graus-dia pelo **método de Ometto (1981)**, cinco casos em função das tempera
 | F3 — Floração/Enchimento | 450–900 | 1,00 |
 | F4 — Maturação | 900–1.200 | 0,40 |
 
-### Predição de produtividade (motor determinístico, `ENGINE_VERSION` 2.2.0)
+### Predição de produtividade (motor determinístico, `ENGINE_VERSION` 2.3.0)
 - **Ym** (produtividade potencial) informada por safra em sc/ha (`expectedYield`, > 0 e ≤ 250 — `EXPECTED_YIELD_MAX_SC_HA`); a run grava um snapshot; alterar a Ym depois exige reprocessar
 - Redução por janela: $RY_j = Ky_j (1 - \overline{Ks}_j)$ (FAO-33, Eq. 3.2)
 - Índice do ciclo: $Y_a/Y_m = \prod_j [1 - Ky_j (1 - \overline{Ks}_j)]$ sobre as janelas alcançadas; janela não alcançada = fator 1 (`phasesReached` 0–4)
 - Produtividade predita: $Y_a = Y_m \times$ índice (sc/ha); nula sem Ym
 - Sem faixa de incerteza (valor único); sem Monte Carlo, cenários de decisão ou registro de decisão — removidos em 2026-11-02
 - Código: `backend/src/modules/msa/engine/yield.ts` (`cycleYieldIndex`, `predictedYield`); fórmulas em `docs/msa/algoritmos.md` §6
+
+### Eventos de estresse, perda por janela e severidades — motor 2.3.0
+- **Evento de estresse** (`engine/stress.ts`, `detectStressEvents(series, cultivar, { ksThreshold, minDays })`): sequência contígua de dias de cultura (F1–F4; `PRE`/`COMPLETED` não contam nem conectam) com `ks < STRESS_KS_THRESHOLD` (padrão **0,70**) durando ≥ `STRESS_MIN_DAYS` (padrão **3**); não é dividido na fronteira de janela; traz `deficitMm = Σ(etc − etcAdj)`, `phases`, `dominantPhase` (mais dias; empate → maior Ky) e `kyDominant`. Parâmetros provisórios (questão #14), gravados na run
+- **Perda por janela** (`attributeYieldLoss(summaries, ym)`): decomposição sequencial `loss_j = Ym · Π_{k<j} f_k · (1 − f_j)`, soma exata `= Ym − Ya` (telescópica; `algoritmos.md` §6.5); sem Ym só percentuais
+- **Severidade**: da **janela** pela perda `yieldReductionPct` (ok < 5 %, atenção 5–15 %, crítico > 15 % — `LOSS_WARNING_PCT`/`LOSS_CRITICAL_PCT`, questão #4 decidida como convenção); do **dia** pelo Ks (0,85 / 0,70). Constantes espelhadas em `frontend/src/lib/msa/msa.ts`
+- A run grava `stressEvents`, `yieldLoss`, `stressKsThreshold`, `stressMinDays`; para runs ≤ 2.2.0 `GET /msa` calcula na leitura (`stressComputedOnRead: true`), sem gravar
+- Painel: seção final **"Como foi a safra"** (`SeasonStory`/`CropTimeline`, igual para os três papéis; frases em `lib/msa/story.ts`); cartões coloridos pela perda; faixas hachuradas dos eventos nos gráficos; CSV de resumos com `perda_sc_ha` e CSV `estresses-…csv`
+- Validação: `pnpm msa:validate-stress -- --harvest <id> [--station <código>]` (eventos × veranicos da estação, Caso 2, descritivo)
 
 ### Entressafra (spin-up) — motor 2.2.0
 - O balanço de toda safra começa no **último 1º de fevereiro ≤ emergência** (`preSeasonStart`), com o solo na capacidade de campo (`initialDepletion` 0 no início do spin-up), e atravessa a entressafra **sem cultura** — padrão Thornthwaite-Mather (1955); a depleção na emergência é calculada, não assumida

@@ -7,13 +7,16 @@ import type { MsaRun, MsaRunReason } from '@prisma/client';
 import { qmRepository, type QmCalibrationSummary } from '../admin-qm/qm.repository';
 import { AppError } from '../../utils/app-error';
 import { preSeasonConfig } from '../../config/pre-season';
+import { stressParams } from '../../config/stress';
 import { CULTIVAR_PARAM_KEYS } from '../cultivars/dtos/cultivar-params.schema';
 import { harvestService } from '../harvests/harvest.service';
 import type { AuthUser } from '../properties/property.service';
 import {
   ENGINE_VERSION,
+  attributeYieldLoss,
   convertDepletion,
   cycleYieldIndex,
+  detectStressEvents,
   dailyGDA,
   predictedYield,
   preSeasonStart,
@@ -26,6 +29,10 @@ import {
   type DailyWeather,
   type Phase,
   type PhaseSummary,
+  type StressEvent,
+  type StressParams,
+  type YieldLossAttribution,
+  type YieldPhase,
 } from './engine';
 import { era5Repository } from './era5.repository';
 import {
@@ -96,6 +103,14 @@ export interface RunView {
   /** Depleção na emergência, convertida para zrIni (mm) e em % de TAW(zrIni) */
   emergenceDepletionMm: number | null;
   emergenceDepletionPct: number | null;
+  /** Eventos de estresse e perda por janela (motor 2.3.0); null nas runs anteriores sem cálculo na leitura */
+  stressEvents: StressEvent[] | null;
+  yieldLoss: YieldLossAttribution | null;
+  /** Parâmetros da detecção usados (gravados, ou os atuais quando calculado na leitura) */
+  stressKsThreshold: number | null;
+  stressMinDays: number | null;
+  /** true quando `GET /msa` calculou eventos e perda a partir da série porque a run não os tinha gravados */
+  stressComputedOnRead: boolean;
   engineVersion: string;
   cultivarSnapshot: unknown;
   soilSnapshot: unknown;
@@ -152,6 +167,11 @@ export function toRunView(run: MsaRun): RunView {
     preSeasonZr: run.preSeasonZr,
     emergenceDepletionMm: run.emergenceDepletionMm,
     emergenceDepletionPct: run.emergenceDepletionPct,
+    stressEvents: (run.stressEvents as StressEvent[] | null) ?? null,
+    yieldLoss: (run.yieldLoss as YieldLossAttribution | null) ?? null,
+    stressKsThreshold: run.stressKsThreshold,
+    stressMinDays: run.stressMinDays,
+    stressComputedOnRead: false,
     engineVersion: run.engineVersion,
     cultivarSnapshot: run.cultivarSnapshot,
     soilSnapshot: run.soilSnapshot,
@@ -292,6 +312,57 @@ export function emergenceDepletion(drPre: number, soil: SoilSnapshot, zrPre: num
   return { emergenceDepletionMm: mm, emergenceDepletionPct: (mm / tawIni) * 100 };
 }
 
+/** Resumos gravados → `PhaseSummary[]` do motor (para recalcular perda/eventos na leitura). */
+export function toPhaseSummaries(rows: ReadonlyArray<RunWithSummaries['phaseSummaries'][number]>): PhaseSummary[] {
+  return rows.map((s) => ({
+    phase: s.phase as YieldPhase, days: s.days, ksMean: s.ksMean, etcAdjAccum: s.etcAdjAccum, precipAccum: s.precipAccum,
+    yieldReductionPct: s.yieldReductionPct,
+  }));
+}
+
+/** Linhas persistidas → `DailyBalanceRow[]` (dias de cultura, para a detecção de eventos na leitura). */
+export function toBalanceRows(rows: ReadonlyArray<{ date: Date; phase: string; gda: number; gdaAccum: number; zr: number; et0: number; kc: number; etc: number; precipitation: number; dr: number; ks: number; etcAdj: number; taw: number; raw: number }>): DailyBalanceRow[] {
+  return rows.map((r) => ({
+    date: toStr(r.date), phase: r.phase as Phase, gda: r.gda, gdaAccum: r.gdaAccum, zr: r.zr, et0: r.et0, kc: r.kc, etc: r.etc,
+    precipitation: r.precipitation, dr: r.dr, ks: r.ks, etcAdj: r.etcAdj, taw: r.taw, raw: r.raw,
+  }));
+}
+
+/** Campos da run derivados de eventos e perda (motor 2.3.0). */
+export function stressFields(series: ReadonlyArray<DailyBalanceRow>, summaries: ReadonlyArray<PhaseSummary>, cultivar: CultivarParams, expectedYield: number | null, params: StressParams) {
+  return {
+    stressEvents: detectStressEvents(series, cultivar, params) as unknown as object,
+    yieldLoss: attributeYieldLoss(summaries, expectedYield) as unknown as object,
+    stressKsThreshold: params.ksThreshold,
+    stressMinDays: params.minDays,
+  };
+}
+
+/**
+ * Leitura de uma run sem eventos gravados (motor ≤ 2.2.0): calcula eventos e perda
+ * a partir da série persistida, do snapshot da cultivar e dos parâmetros atuais,
+ * sem gravar; `stressComputedOnRead: true`. Runs 2.3.0 voltam inalteradas.
+ */
+export function withStressOnRead(view: RunView, run: RunWithSummaries, daily: ReadonlyArray<Parameters<typeof toBalanceRows>[0][number]>, params: StressParams): RunView {
+  if (view.stressEvents !== null && view.yieldLoss !== null) return view;
+  const cultivar = run.cultivarSnapshot as unknown as CultivarParams;
+  const series = toBalanceRows(daily);
+  const summaries = toPhaseSummaries(run.phaseSummaries);
+  try {
+    const f = stressFields(series, summaries, cultivar, run.expectedYield, params);
+    return {
+      ...view,
+      stressEvents: f.stressEvents as StressEvent[],
+      yieldLoss: f.yieldLoss as YieldLossAttribution,
+      stressKsThreshold: f.stressKsThreshold,
+      stressMinDays: f.stressMinDays,
+      stressComputedOnRead: true,
+    };
+  } catch {
+    return view; // snapshot ou resumos inconsistentes: a leitura segue sem a seção
+  }
+}
+
 /** Campos da run derivados do índice do ciclo e da Ym da safra. */
 export function yieldFields(cycle: CycleYield, expectedYield: number | null) {
   return {
@@ -365,6 +436,7 @@ async function runProcessing(harvest: HarvestForProcessing, options: ProcessOpti
         {
           ...base, status: 'SUCCEEDED', finishedAt: new Date(), ...yieldFields(cycle, harvest.expectedYield),
           ...emergenceDepletion(lastPreIndex >= 0 ? series[lastPreIndex]!.dr : 0, soil, preSeasonZr, cultivar.zrIni),
+          ...stressFields(series, summaries, cultivar, harvest.expectedYield, stressParams()),
         },
         dailyRows(series),
         summaryRows(summaries),
@@ -399,7 +471,7 @@ export const msaService = {
     const daily = await msaRepository.dailyResults(run.id);
     const last = daily[daily.length - 1];
     return {
-      run: await runView(run),
+      run: withStressOnRead(await runView(run), run, daily, stressParams()),
       phases: run.phaseSummaries.map(toPhaseView),
       currentPhase: (last?.phase as Phase) ?? null,
       cultivarChangedSinceRun: cultivarChangedSinceRun(run.cultivarSnapshot, harvest.cultivar as unknown as Record<string, unknown>),

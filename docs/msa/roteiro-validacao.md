@@ -479,6 +479,23 @@ questões nº 11 e 12 de `questoes-abertas.md`.
 
 ---
 
+### 2.7 Momentos de estresse × veranicos da estação
+
+O painel resume a falta de água em **momentos de estresse** (dias seguidos com
+Ks abaixo de 0,70, por pelo menos 3 dias). Para conferir se eles batem com o que
+a estação mediu, rode, com a safra histórica processada e a estação importada:
+
+```bash
+cd backend && pnpm msa:validate-stress -- --harvest <uuid-da-safra> --station 83423 \
+  --out ../validacao/saida/stress-goiania.csv
+```
+
+O script lista os eventos do painel, os veranicos da estação (dias seguidos com
+chuva abaixo de 10 mm) e, para cada evento, quantos por cento dos seus dias caem
+dentro de um veranico. Não há critério de aceitação: anote em `notas.md` a
+concordância das datas e repita com `--ks-threshold 0.8` e `--min-days 5` para ver
+a sensibilidade (questão nº 14 de `questoes-abertas.md`).
+
 ## Fase 4 — Correção de viés da chuva (Quantile Mapping) × INMET
 
 **Pergunta:** a chuva do ERA5-Land corrigida pelo Quantile Mapping fica mais

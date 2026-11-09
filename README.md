@@ -20,6 +20,10 @@ Interface em <http://localhost> (login com `ADMIN_EMAIL`/`ADMIN_PASSWORD`), API 
 
 Atalhos do `package.json` da raiz: `pnpm stop`, `pnpm logs:api`, `pnpm migrate`, `pnpm test`, `pnpm test:e2e`, `pnpm etl:status`, `pnpm db:backup`, `pnpm db:restore -- backups/<arquivo>.dump`, `pnpm manual:capture` e `pnpm manual:pdf` (imagens e PDF do manual do usuário), `pnpm clean` (remove **todos** os volumes, inclusive o cache ERA5).
 
+### Após atualizar para o motor 2.3.0 (momentos de estresse e "Como foi a safra")
+
+A migration `add_stress_timeline` é aditiva (quatro colunas nulas em `msa_runs`). Nada é obrigatório depois do deploy: a seção "Como foi a safra" aparece para as runs 2.2.0 porque a API calcula eventos e perda na leitura a partir da série gravada (com a nota "calculado agora com os parâmetros atuais"). **Processar todas as safras ativas** em `/admin` grava os campos e remove a nota. Opcional no `.env`: `STRESS_KS_THRESHOLD` (0,70) e `STRESS_MIN_DAYS` (3).
+
 ### Após atualizar o ETL para requisições mensais ao CDS (2026-11)
 
 O CDS passou a recusar por custo as requisições trimestrais (`cost limits exceeded`); o ETL agora pede sempre um mês por requisição, até `ERA5_CDS_MAX_CONCURRENT` (padrão 2, opcional no `.env`) em paralelo. Não há migration. Reenfileire os backfills que falharam por custo: reprocesse as safras `NEEDS_DATA` (ou crie a safra de novo) ou use **Backfill regional** em `/admin` com `from` em `AAAA-02-01` — um único job cobre o intervalo inteiro. Arquivos `AAAA-Qn.nc` no volume `etl_cache` deixam de ser lidos e podem ser apagados.

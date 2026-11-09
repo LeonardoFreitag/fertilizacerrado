@@ -172,3 +172,58 @@ export interface CycleYield {
   /** Fator de cada janela F1–F4 (1 quando não alcançada) */
   factors: [number, number, number, number];
 }
+
+// ---------------------------------------------------------------------------
+// Eventos de estresse, atribuição de perda e severidades (`docs/msa/algoritmos.md` §6.5 e §7)
+// ---------------------------------------------------------------------------
+
+/** Parâmetros da detecção de eventos (do ambiente: STRESS_KS_THRESHOLD / STRESS_MIN_DAYS; gravados na run). */
+export interface StressParams {
+  /** Dia de estresse quando `ks < ksThreshold` (estrito); em (0, 1] */
+  ksThreshold: number;
+  /** Duração mínima (dias consecutivos) para a sequência virar evento; inteiro ≥ 1 */
+  minDays: number;
+}
+
+/** Episódio contíguo de dias de cultura com Ks abaixo do limiar (não é dividido na fronteira de janela). */
+export interface StressEvent {
+  /** Primeiro e último dia (AAAA-MM-DD) */
+  start: string;
+  end: string;
+  days: number;
+  ksMin: number;
+  ksMean: number;
+  /** Σ (ETc − ETc_adj) dos dias do evento: a água que a cultura deixou de transpirar (mm) */
+  deficitMm: number;
+  /** Janelas atravessadas, em ordem, com os dias em cada uma */
+  phases: { phase: YieldPhase; days: number }[];
+  /** Janela com mais dias (empate → maior Ky) */
+  dominantPhase: YieldPhase;
+  /** Ky da janela dominante (para ordenar eventos por `deficitMm × kyDominant` sem conhecer a cultivar) */
+  kyDominant: number;
+}
+
+/** Perda atribuída a uma janela pela decomposição sequencial do índice do ciclo. */
+export interface YieldLossPhase {
+  phase: YieldPhase;
+  /** Fator da janela (1 − Ky (1 − Ks̄); 1 quando não alcançada) */
+  factor: number;
+  /** (Π_{k<j} f_k)(1 − f_j) × 100 */
+  lossPct: number;
+  /** ym × lossPct / 100 (sc/ha); null sem Ym */
+  lossScHa: number | null;
+}
+
+/** Resultado de `attributeYieldLoss`: Σ lossScHa = ym − predictedYield (soma telescópica). */
+export interface YieldLossAttribution {
+  ym: number | null;
+  yieldIndex: number;
+  predictedYield: number | null;
+  totalLossScHa: number | null;
+  /** (1 − yieldIndex) × 100 */
+  totalLossPct: number;
+  phases: [YieldLossPhase, YieldLossPhase, YieldLossPhase, YieldLossPhase];
+}
+
+/** Severidade exibida no painel: da janela (por perda) e do dia (por Ks). */
+export type Severity = 'ok' | 'warning' | 'critical' | 'pending';

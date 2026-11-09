@@ -1,17 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { csvCell, slug, toCsv } from './csv';
 import type { PhaseView } from '../api/types';
-import { formatIndexPct, formatMm, formatPct, formatScHa, groupMissingDates, phaseRanges, preSeasonRange, rainBeforeEmergence, severity, soilWaterTexts, suggestSeason, summariesCsv, yieldSummaryRows, yieldWarnings } from './msa';
+import type { StressEvent } from '../api/types';
+import { daySeverity, formatIndexPct, formatMm, formatPct, formatScHa, groupMissingDates, KS_OK, KS_WARNING, LOSS_CRITICAL_PCT, LOSS_WARNING_PCT, phaseRanges, preSeasonRange, rainBeforeEmergence, soilWaterTexts, stressEventsCsv, suggestSeason, summariesCsv, windowSeverity, yieldSummaryRows, yieldWarnings } from './msa';
 
-describe('severity', () => {
-  it('limiares 0,85 e 0,70', () => {
-    expect(severity(0.92)).toBe('ok');
-    expect(severity(0.85)).toBe('ok');
-    expect(severity(0.78)).toBe('warning');
-    expect(severity(0.7)).toBe('warning');
-    expect(severity(0.61)).toBe('critical');
-    expect(severity(null)).toBe('pending');
-    expect(severity(undefined)).toBe('pending');
+describe('severidade (espelho de engine/stress.ts)', () => {
+  it('constantes iguais às do motor', () => {
+    expect([LOSS_WARNING_PCT, LOSS_CRITICAL_PCT, KS_OK, KS_WARNING]).toEqual([5, 15, 0.85, 0.7]);
+  });
+  it('janela pela perda: 3 % ok, 10 % atenção, 31 % crítico; limites são atenção; nulo pendente', () => {
+    expect(windowSeverity(3)).toBe('ok');
+    expect(windowSeverity(10)).toBe('warning');
+    expect(windowSeverity(31)).toBe('critical');
+    expect(windowSeverity(5)).toBe('warning');
+    expect(windowSeverity(15)).toBe('warning');
+    expect(windowSeverity(null)).toBe('pending');
+    expect(windowSeverity(undefined)).toBe('pending');
+  });
+  it('dia pelo Ks: 0,92 ok, 0,78 atenção, 0,61 crítico', () => {
+    expect(daySeverity(0.92)).toBe('ok');
+    expect(daySeverity(0.85)).toBe('ok');
+    expect(daySeverity(0.78)).toBe('warning');
+    expect(daySeverity(0.7)).toBe('warning');
+    expect(daySeverity(0.61)).toBe('critical');
   });
 });
 
@@ -174,17 +185,44 @@ describe('summariesCsv', () => {
   const phases = [phase('F1', 8, 1, 0), phase('F2', 22, 0.9, 8), phase('F3', 30, 0.8, 20), phase('F4', 0, null, null)];
 
   it('com Ym: cabeçalho da spec, quatro linhas, índice/Ym/predita repetidos, sem percentis', () => {
-    const csv = summariesCsv(phases, { yieldIndex: 0.736, expectedYield: 65, predictedYield: 47.84 }).replace('\ufeff', '');
+    const yieldLoss = {
+      ym: 65, yieldIndex: 0.736, predictedYield: 47.84, totalLossScHa: 17.16, totalLossPct: 26.4,
+      phases: [
+        { phase: 'F1' as const, factor: 1, lossPct: 0, lossScHa: 0 },
+        { phase: 'F2' as const, factor: 0.92, lossPct: 8, lossScHa: 5.2 },
+        { phase: 'F3' as const, factor: 0.8, lossPct: 18.4, lossScHa: 11.96 },
+        { phase: 'F4' as const, factor: 1, lossPct: 0, lossScHa: 0 },
+      ],
+    };
+    const csv = summariesCsv(phases, { yieldIndex: 0.736, expectedYield: 65, predictedYield: 47.84, yieldLoss }).replace('\ufeff', '');
     const lines = csv.trimEnd().split('\r\n');
-    expect(lines[0]).toBe('janela;dias;ks_medio;reducao_pct;etc_adj_mm;chuva_mm;indice_ciclo;ym_sc_ha;predita_sc_ha');
+    expect(lines[0]).toBe('janela;dias;ks_medio;reducao_pct;etc_adj_mm;chuva_mm;indice_ciclo;ym_sc_ha;predita_sc_ha;perda_sc_ha');
     expect(lines).toHaveLength(5);
-    expect(lines[2]).toBe('F2;22;0,9;8;100;50;0,736;65;47,84');
-    expect(lines[4]).toBe('F4;0;;;100;50;0,736;65;47,84');
+    expect(lines[2]).toBe('F2;22;0,9;8;100;50;0,736;65;47,84;5,2');
+    expect(lines[4]).toBe('F4;0;;;100;50;0,736;65;47,84;0');
+    expect(5.2 + 11.96).toBeCloseTo(65 - 47.84, 9);
     expect(csv).not.toMatch(/p10|p50|p90/);
   });
 
   it('sem Ym: índice preenchido, Ym e predita vazios em todas as linhas', () => {
-    const lines = summariesCsv(phases, { yieldIndex: 0.736, expectedYield: null, predictedYield: null }).replace('\ufeff', '').trimEnd().split('\r\n');
-    expect(lines.slice(1).every((l) => l.endsWith(';0,736;;'))).toBe(true);
+    const lines = summariesCsv(phases, { yieldIndex: 0.736, expectedYield: null, predictedYield: null, yieldLoss: null }).replace('\ufeff', '').trimEnd().split('\r\n');
+    expect(lines.slice(1).every((l) => l.endsWith(';0,736;;;'))).toBe(true);
+  });
+});
+
+describe('stressEventsCsv', () => {
+  const events: StressEvent[] = [
+    { start: '2026-01-12', end: '2026-01-23', days: 12, ksMin: 0.31, ksMean: 0.52, deficitMm: 38.4, phases: [{ phase: 'F3', days: 12 }], dominantPhase: 'F3', kyDominant: 1 },
+    { start: '2025-11-03', end: '2025-11-06', days: 4, ksMin: 0.6, ksMean: 0.65, deficitMm: 5, phases: [{ phase: 'F1', days: 3 }, { phase: 'F2', days: 1 }], dominantPhase: 'F1', kyDominant: 0.2 },
+  ];
+  it('cabeçalho da spec e uma linha por evento', () => {
+    const lines = stressEventsCsv(events).replace('\ufeff', '').trimEnd().split('\r\n');
+    expect(lines[0]).toBe('inicio;fim;dias;janela_dominante;janelas;ks_min;ks_medio;deficit_mm');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe('2026-01-12;2026-01-23;12;F3;F3:12;0,31;0,52;38,4');
+    expect(lines[2]).toBe('2025-11-03;2025-11-06;4;F1;F1:3 F2:1;0,6;0,65;5');
+  });
+  it('sem eventos: só o cabeçalho', () => {
+    expect(stressEventsCsv([]).replace('\ufeff', '').trimEnd().split('\r\n')).toHaveLength(1);
   });
 });

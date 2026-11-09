@@ -76,7 +76,11 @@ check "reason MANUAL, sem jobId" "MANUAL|null" "$(echo "$BODY" | j run.reason)|$
 RUN1=$(echo "$BODY" | j run.id)
 check "status SUCCEEDED" SUCCEEDED "$(echo "$BODY" | j run.status)"
 lacks "run sem seed/iterações/sigmas" "$BODY" '"seed"'
-check "engineVersion" 2.2.0 "$(echo "$BODY" | j run.engineVersion)"
+check "engineVersion" 2.3.0 "$(echo "$BODY" | j run.engineVersion)"
+check "parâmetros de estresse gravados (0,70 / 3 dias)" "0.7|3|false" "$(echo "$BODY" | j run.stressKsThreshold)|$(echo "$BODY" | j run.stressMinDays)|$(echo "$BODY" | j run.stressComputedOnRead)"
+N_EV=$(echo "$BODY" | j run.stressEvents.length); echo "      eventos de estresse: $N_EV"
+check "stressEvents é lista" 1 "$( [ -n "$N_EV" ] && echo 1 || echo 0 )"
+TL=$(echo "$BODY" | j run.yieldLoss.totalLossScHa); echo "      perda total: $TL sc/ha"
 check "dateFrom/preSeasonFrom = 1º de fevereiro" "$PRE_FROM|$PRE_FROM" "$(echo "$BODY" | j run.dateFrom)|$(echo "$BODY" | j run.preSeasonFrom)"
 check "Kc e Zr da entressafra gravados" "1|0.95" "$(echo "$BODY" | j run.preSeasonKc)|$(echo "$BODY" | j run.preSeasonZr)"
 EDP=$(echo "$BODY" | j run.emergenceDepletionPct); echo "      depleção na emergência: $(echo "$BODY" | j run.emergenceDepletionMm) mm ($EDP %)"
@@ -86,6 +90,8 @@ check "expectedYield da run = Ym da safra" 65 "$(echo "$BODY" | j run.expectedYi
 check "phasesReached 4" 4 "$(echo "$BODY" | j run.phasesReached)"
 check "índice em (0, 1]" 1 "$(node -e "console.log(($YI>0&&$YI<=1)?1:0)")"
 check "predita = Ym × índice (6 casas)" "$(node -e "console.log((65*$YI).toFixed(6))")" "$(node -e "console.log(Number(process.argv[1]).toFixed(6))" "$PY")"
+check "perda total = Ym − predita (6 casas)" "$(node -e "console.log((65-$PY).toFixed(6))")" "$(node -e "console.log(Number(process.argv[1]).toFixed(6))" "$TL")"
+check "Σ perda por janela = perda total (6 casas)" "$(node -e "console.log(Number(process.argv[1]).toFixed(6))" "$TL")" "$(echo "$BODY" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.run.yieldLoss.phases.reduce((a,p)=>a+p.lossScHa,0).toFixed(6))")"
 TO1=$(echo "$BODY" | j run.dateTo); echo "      dateTo (GDA atinge gdaTotal): $TO1 (série vai até $LAST_SYN)"
 check "ciclo encerra antes do fim da série" 1 "$( [ "$TO1" \< "$LAST_SYN" ] && echo 1 || echo 0 )"
 check "snapshot da cultivar com 16 parâmetros (tUpper) + id" "1200|1.15|30|$SOJA" "$(echo "$BODY" | j run.cultivarSnapshot.gdaTotal)|$(echo "$BODY" | j run.cultivarSnapshot.kcMid)|$(echo "$BODY" | j run.cultivarSnapshot.tUpper)|$(echo "$BODY" | j run.cultivarSnapshot.id)"

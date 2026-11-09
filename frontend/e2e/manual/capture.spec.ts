@@ -21,7 +21,10 @@ interface RunRow { id: string; status: 'SUCCEEDED' | 'NEEDS_DATA' | 'FAILED'; re
 interface PhaseRow { phase: string; days: number; ksMean: number | null; yieldReductionPct: number | null; etcAdjAccum: number | null; precipAccum: number | null }
 interface YieldRun { expectedYield: number | null; yieldIndex: number | null; predictedYield: number | null; phasesReached: number | null }
 interface PreSeasonRun { preSeasonFrom: string | null; preSeasonKc: number | null; preSeasonZr: number | null; emergenceDepletionMm: number | null; emergenceDepletionPct: number | null }
-interface Latest { run: RunRow & YieldRun & PreSeasonRun & { dateFrom: string; dateTo: string }; currentPhase: string | null; phases: PhaseRow[] }
+interface StressEventRow { start: string; end: string; days: number; dominantPhase: string; deficitMm: number; ksMin: number }
+interface YieldLossRow { totalLossScHa: number | null; totalLossPct: number; phases: { phase: string; lossScHa: number | null; lossPct: number }[] }
+interface StressRun { stressEvents: StressEventRow[] | null; yieldLoss: YieldLossRow | null; stressKsThreshold: number | null; stressMinDays: number | null; stressComputedOnRead: boolean }
+interface Latest { run: RunRow & YieldRun & PreSeasonRun & StressRun & { dateFrom: string; dateTo: string }; currentPhase: string | null; phases: PhaseRow[] }
 
 /** Estado compartilhado entre os capítulos (os testes rodam em série). */
 const ctx = { propertyId: '', field1Id: '', field2Id: '', ownCultivarId: '', harvest1Id: '', harvest2Id: '', capture: {} as Record<string, unknown> };
@@ -463,7 +466,25 @@ test('capítulo 6 — painel agrometeorológico', async ({ page }) => {
   await togglePreSeason.uncheck();
   await expect(charts.getByText('Entressafra', { exact: true })).toHaveCount(0, { timeout: 20_000 });
 
-  await shot(page, '06-18-exportar', { clip: header, highlight: [page.getByRole('button', { name: 'Exportar série diária' }), page.getByRole('button', { name: 'Exportar resumos' })] });
+  // seção final "Como foi a safra" (motor 2.3.0): linha do tempo da cultura, momentos de estresse, produtividade esperada
+  const story = page.getByTestId('season-story');
+  await story.scrollIntoViewIfNeeded();
+  await expect(story.getByTestId('story-predicted')).toContainText('sc/ha', { timeout: 20_000 });
+  await expect(story.getByTestId('stress-list').locator('li').first()).toBeVisible();
+  await shot(page, '06-14-como-foi-a-safra', { clip: story, pad: 10 });
+  await shot(page, '06-15-linha-do-tempo-da-cultura', { clip: story.getByTestId('crop-timeline'), pad: 12 });
+  await shot(page, '06-16-momentos-de-estresse', { clip: story.getByTestId('stress-list'), pad: 12, highlight: story.getByTestId('stress-list').locator('li').first() });
+  await shot(page, '06-17-de-onde-veio-a-perda', { clip: story.getByTestId('loss-bars').locator('xpath=..'), pad: 12, highlight: story.getByTestId('story-biggest-loss') });
+  const storyOnScreen = {
+    predictedText: (await story.getByTestId('story-predicted').innerText()).trim(),
+    lossText: (await story.getByTestId('story-loss').innerText()).trim(),
+    biggestLoss: (await story.getByTestId('story-biggest-loss').innerText()).trim(),
+    firstEvent: (await story.getByTestId('stress-list').locator('li').first().innerText()).trim(),
+    eventCount: await story.getByTestId('stress-list').locator('li').count(),
+    dryEmergence: (await story.getByTestId('dry-emergence-marker').count()) > 0,
+  };
+
+  await shot(page, '06-18-exportar', { clip: header, highlight: [page.getByRole('button', { name: 'Exportar série diária' }), page.getByRole('button', { name: 'Exportar resumos' }), page.getByRole('button', { name: 'Exportar estresses' })] });
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Exportar série diária' }).click()]);
   ctx.capture.csvFile = download.suggestedFilename().replace(/-[0-9a-f]{8}\.csv$/, '-<run>.csv');
 
@@ -502,6 +523,16 @@ test('capítulo 6 — painel agrometeorológico', async ({ page }) => {
       predictedYield: latest.run.predictedYield,
       phasesReached: latest.run.phasesReached,
       ...yieldOnScreen,
+    },
+    story: {
+      ksThreshold: latest.run.stressKsThreshold,
+      minDays: latest.run.stressMinDays,
+      computedOnRead: latest.run.stressComputedOnRead,
+      events: (latest.run.stressEvents ?? []).map((e) => ({ start: e.start, end: e.end, days: e.days, dominantPhase: e.dominantPhase, deficitMm: e.deficitMm, ksMin: e.ksMin })),
+      totalLossScHa: latest.run.yieldLoss?.totalLossScHa ?? null,
+      totalLossPct: latest.run.yieldLoss?.totalLossPct ?? null,
+      lossByPhase: Object.fromEntries((latest.run.yieldLoss?.phases ?? []).map((p) => [p.phase, { lossScHa: p.lossScHa, lossPct: p.lossPct }])),
+      ...storyOnScreen,
     },
     soilWater: {
       preSeasonFrom: latest.run.preSeasonFrom,
@@ -559,6 +590,9 @@ test('visão do produtor (somente leitura)', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Reprocessar' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Editar produtividade potencial' })).toHaveCount(0);
   await expect(page.getByTestId('yield-inform-link')).toHaveCount(0);
+  // a seção "Como foi a safra" é a mesma para o produtor (sem convite a informar a Ym)
+  await expect(page.getByTestId('season-story').getByTestId('story-predicted')).toContainText('sc/ha', { timeout: 20_000 });
+  await expect(page.getByTestId('story-inform-link')).toHaveCount(0);
   await page.evaluate(() => window.scrollTo(0, 0));
   await shot(page, '06-22-painel-do-produtor', { settle: 1200 });
 });

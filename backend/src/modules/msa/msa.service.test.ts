@@ -18,6 +18,7 @@ vi.mock('./msa.repository', () => ({
 }));
 vi.mock('../harvests/harvest.service', () => ({ harvestService: { getAccessible: vi.fn().mockResolvedValue({}) } }));
 vi.mock('../../config/pre-season', () => ({ preSeasonConfig: () => ({ kc: 1, zrMode: 'zrMax' }) }));
+vi.mock('../../config/stress', () => ({ stressParams: () => ({ ksThreshold: 0.7, minDays: 3 }) }));
 
 import { ENGINE_VERSION } from './engine';
 import { era5Repository } from './era5.repository';
@@ -182,7 +183,7 @@ describe('msaService.processHarvest', () => {
     era5.getDailySeriesForField.mockResolvedValue(FULL);
     const r = await msaService.processHarvest(USER, 'h1');
     expect(r.run.status).toBe('SUCCEEDED');
-    expect(r.run.engineVersion).toBe('2.2.0');
+    expect(r.run.engineVersion).toBe('2.3.0');
     expect(r.run.dateFrom).toBe('2025-02-01');
     expect(r.run.preSeasonFrom).toBe('2025-02-01');
     expect(r.run.preSeasonKc).toBe(1);
@@ -213,6 +214,45 @@ describe('msaService.processHarvest', () => {
     expect(daily[0]!.gda).toBe(0);
     expect(daily.find((d) => d.date.toISOString().slice(0, 10) === '2025-11-01')!.phase).toBe('F1');
     expect(r.currentPhase).not.toBe('PRE');
+    // motor 2.3.0: eventos e perda gravados com os parâmetros usados
+    expect(Array.isArray(r.run.stressEvents)).toBe(true);
+    expect(r.run.stressKsThreshold).toBe(0.7);
+    expect(r.run.stressMinDays).toBe(3);
+    expect(r.run.stressComputedOnRead).toBe(false);
+    expect(r.run.yieldLoss!.totalLossScHa).toBeCloseTo(65 - r.run.predictedYield!, 9);
+    expect(r.run.yieldLoss!.phases.reduce((acc, p) => acc + p.lossScHa!, 0)).toBeCloseTo(65 - r.run.predictedYield!, 9);
+    for (const e of r.run.stressEvents!) {
+      expect(e.days).toBeGreaterThanOrEqual(3);
+      expect(e.start >= '2025-11-01').toBe(true); // nunca na entressafra
+    }
+  });
+
+  it('dez dias de F3 abaixo de 0,70 ⇒ evento F3 gravado e maior perda em F3', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
+    // Veranico de dezembro (F3 vai de 29/11 a 27/12 nesta série): a floração seca e o Ks cai por semanas; a chuva volta em F4.
+    const dry = FULL.map((d) => (d.date >= '2025-12-01' && d.date <= '2025-12-27' ? { ...d, precipitation: 0 } : d));
+    era5.getDailySeriesForField.mockResolvedValue(dry);
+    const r = await msaService.processHarvest(USER, 'h1');
+    expect(r.run.status).toBe('SUCCEEDED');
+    // o evento pode avançar por F4 enquanto o solo recarrega; o que importa é a floração ter ≥ 10 dias de estresse
+    const f3Days = r.run.stressEvents!.flatMap((e) => e.phases).filter((p) => p.phase === 'F3').reduce((acc, p) => acc + p.days, 0);
+    expect(f3Days).toBeGreaterThanOrEqual(10);
+    expect(r.run.stressEvents!.some((e) => e.phases.some((p) => p.phase === 'F3' && p.days >= 10))).toBe(true);
+    const losses = r.run.yieldLoss!.phases.map((p) => p.lossScHa!);
+    expect(losses[2]).toBe(Math.max(...losses));
+    const [created] = repo.createSucceededRun.mock.calls[0]!;
+    expect(created).toMatchObject({ stressKsThreshold: 0.7, stressMinDays: 3 });
+    expect(created.stressEvents).toEqual(r.run.stressEvents);
+  });
+
+  it('safra sem Ym ⇒ perda só em percentual', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest({ expectedYield: null }) as never);
+    era5.getDailySeriesForField.mockResolvedValue(FULL);
+    const r = await msaService.processHarvest(USER, 'h1');
+    expect(r.run.yieldLoss!.ym).toBeNull();
+    expect(r.run.yieldLoss!.totalLossScHa).toBeNull();
+    expect(r.run.yieldLoss!.phases.every((p) => p.lossScHa === null)).toBe(true);
+    expect(r.run.yieldLoss!.totalLossPct).toBeCloseTo((1 - r.run.yieldIndex!) * 100, 9);
   });
 
   it('safra sem Ym ⇒ índice e janelas gravados, predita e Ym nulas', async () => {
@@ -382,6 +422,59 @@ describe('msaService.getLatest', () => {
     repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
     repo.latestSucceededRun.mockResolvedValue(null);
     await expect(msaService.getLatest(USER, 'h1')).rejects.toMatchObject({ status: 404, code: 'NO_MSA_RESULT' });
+  });
+
+  it('run 2.2.0 sem campos gravados ⇒ eventos e perda calculados na leitura, sem gravar', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
+    const summaries = [
+      { phase: 'F1', days: 10, ksMean: 1, etcAdjAccum: 1, precipAccum: 1, yieldReductionPct: 0 },
+      { phase: 'F2', days: 10, ksMean: 0.9, etcAdjAccum: 1, precipAccum: 1, yieldReductionPct: 8 },
+      { phase: 'F3', days: 10, ksMean: 0.8, etcAdjAccum: 1, precipAccum: 1, yieldReductionPct: 20 },
+      { phase: 'F4', days: 10, ksMean: 1, etcAdjAccum: 1, precipAccum: 1, yieldReductionPct: 0 },
+    ];
+    repo.latestSucceededRun.mockResolvedValue({ ...run, engineVersion: '2.2.0', stressEvents: null, yieldLoss: null, stressKsThreshold: null, stressMinDays: null, yieldIndex: 0.736, predictedYield: 47.84, phaseSummaries: summaries } as never);
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      runId: 'run-ok', date: new Date(Date.UTC(2026, 0, 1 + i)), phase: i < 2 ? 'F2' : 'F3', gda: 10, gdaAccum: 500, zr: 0.9, et0: 5, kc: 1, etc: 5,
+      precipitation: 0, dr: 60, ks: i >= 3 && i <= 8 ? 0.4 : 1, etcAdj: i >= 3 && i <= 8 ? 2 : 5, taw: 150, raw: 75,
+    }));
+    repo.dailyResults.mockResolvedValue(rows as never);
+    const r = await msaService.getLatest(USER, 'h1');
+    expect(r.run.stressComputedOnRead).toBe(true);
+    expect(r.run.stressKsThreshold).toBe(0.7);
+    expect(r.run.stressMinDays).toBe(3);
+    expect(r.run.stressEvents).toHaveLength(1);
+    expect(r.run.stressEvents![0]).toMatchObject({ start: '2026-01-04', end: '2026-01-09', days: 6, dominantPhase: 'F3' });
+    expect(r.run.stressEvents![0]!.deficitMm).toBeCloseTo(18, 9);
+    expect(r.run.yieldLoss!.phases.map((p) => p.lossScHa!)).toEqual([0, expect.closeTo(5.2, 9), expect.closeTo(11.96, 9), 0]);
+    expect(r.run.engineVersion).toBe('2.2.0');
+    expect(repo.createRun).not.toHaveBeenCalled();
+    expect(repo.createSucceededRun).not.toHaveBeenCalled();
+  });
+
+  it('run 2.3.0 ⇒ devolve os campos gravados com stressComputedOnRead false', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
+    const stored = [{ start: '2026-01-04', end: '2026-01-09', days: 6, ksMin: 0.4, ksMean: 0.4, deficitMm: 18, phases: [{ phase: 'F3', days: 6 }], dominantPhase: 'F3', kyDominant: 1 }];
+    repo.latestSucceededRun.mockResolvedValue({ ...run, engineVersion: '2.3.0', stressEvents: stored, yieldLoss: { ym: 65, yieldIndex: 0.9, predictedYield: 58.5, totalLossScHa: 6.5, totalLossPct: 10, phases: [] }, stressKsThreshold: 0.6, stressMinDays: 4 } as never);
+    const r = await msaService.getLatest(USER, 'h1');
+    expect(r.run.stressComputedOnRead).toBe(false);
+    expect(r.run.stressEvents).toEqual(stored);
+    expect(r.run.stressKsThreshold).toBe(0.6);
+    expect(r.run.stressMinDays).toBe(4);
+  });
+});
+
+describe('msaService.listRuns', () => {
+  it('devolve só o gravado: nulos nas runs antigas, sem cálculo na leitura', async () => {
+    repo.findHarvestForProcessing.mockResolvedValue(harvest() as never);
+    repo.listRuns.mockResolvedValue([
+      { id: 'r-new', status: 'SUCCEEDED', engineVersion: '2.3.0', stressEvents: [], yieldLoss: { ym: null }, stressKsThreshold: 0.7, stressMinDays: 3, startedAt: new Date(), finishedAt: new Date(), dateFrom: new Date(), dateTo: new Date(), qmCalibrationId: null },
+      { id: 'r-old', status: 'SUCCEEDED', engineVersion: '2.2.0', stressEvents: null, yieldLoss: null, stressKsThreshold: null, stressMinDays: null, startedAt: new Date(), finishedAt: new Date(), dateFrom: new Date(), dateTo: new Date(), qmCalibrationId: null },
+    ] as never);
+    const runs = await msaService.listRuns(USER, 'h1');
+    expect(runs[0]!.stressEvents).toEqual([]);
+    expect(runs[1]!.stressEvents).toBeNull();
+    expect(runs[1]!.yieldLoss).toBeNull();
+    expect(repo.dailyResults).not.toHaveBeenCalled();
   });
 });
 

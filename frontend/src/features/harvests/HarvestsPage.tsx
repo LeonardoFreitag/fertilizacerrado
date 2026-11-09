@@ -5,7 +5,7 @@ import { Badge, LinkButton, PageHeader, Select } from '@/components/ui';
 import { ApiError } from '@/lib/api/client';
 import { HARVEST_STATUS_LABELS, type HarvestResponse, type HarvestStatus } from '@/lib/api/types';
 import { useSession } from '@/lib/auth/session';
-import { formatDate, formatIndexPct, formatScHa, severity, SEVERITY_LABELS } from '@/lib/msa/msa';
+import { formatDate, formatIndexPct, formatScHa, SEVERITY_LABELS, windowSeverity } from '@/lib/msa/msa';
 import { useFieldsOfProperties } from '../fields/api';
 import { useMsaLatest } from '../msa/api';
 import { useProperties } from '../properties/api';
@@ -23,12 +23,12 @@ function MsaBadge({ harvestId }: { harvestId: string }) {
     return <Badge tone="slate">{noResult ? 'MSA sem processamento' : 'MSA indisponível'}</Badge>;
   }
   const current = latest.data.phases?.find((p) => p.phase === latest.data.currentPhase) ?? latest.data.phases?.filter((p) => p.ksMean != null).at(-1);
-  const sev = severity(current?.ksMean);
+  const sev = windowSeverity(current?.yieldReductionPct); // cor pela perda estimada, como nos cartões do painel
   const run = latest.data.run;
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <Badge tone={SEVERITY_TONE[sev]}>
-        MSA {latest.data.currentPhase === 'COMPLETED' ? 'ciclo encerrado' : latest.data.currentPhase ?? ''} · Ks {current?.ksMean?.toFixed(2) ?? '—'} ({SEVERITY_LABELS[sev]})
+        MSA {latest.data.currentPhase === 'COMPLETED' ? 'ciclo encerrado' : latest.data.currentPhase ?? ''} · perda {current?.yieldReductionPct != null ? `${current.yieldReductionPct.toFixed(1).replace('.', ',')} %` : '—'} ({SEVERITY_LABELS[sev]})
       </Badge>
       {run.yieldIndex != null && (
         <span className="text-xs text-slate-700" data-testid="harvest-predicted">

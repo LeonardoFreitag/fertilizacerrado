@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from 'recharts';
 import { Button } from '@/components/ui';
-import type { DailyRow } from '@/lib/api/types';
+import type { DailyRow, StressEvent } from '@/lib/api/types';
 import { PHASE_LABELS } from '@/lib/api/types';
 import { formatDate, formatDateShort, formatNumber, phaseRanges, preSeasonRange } from '@/lib/msa/msa';
 import { PHASE_COLORS } from './PhaseTimeline';
@@ -52,7 +52,15 @@ export interface PreSeasonToggle {
   onToggle: () => void;
 }
 
-export function MsaCharts({ days, banner, preSeason }: { days: ReadonlyArray<DailyRow>; banner: { text: string; onReset: () => void } | null; preSeason?: PreSeasonToggle }) {
+const HATCH = (
+  <defs>
+    <pattern id="stress-hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#dc2626" strokeWidth="2" />
+    </pattern>
+  </defs>
+);
+
+export function MsaCharts({ days, banner, preSeason, events = [] }: { days: ReadonlyArray<DailyRow>; banner: { text: string; onReset: () => void } | null; preSeason?: PreSeasonToggle; events?: ReadonlyArray<StressEvent> }) {
   const data = useMemo(() => days.map((d) => ({ ...d })), [days]);
   const areas = usePhaseAreas(days);
   const pre = useMemo(() => preSeasonRange(days), [days]);
@@ -87,6 +95,10 @@ export function MsaCharts({ days, banner, preSeason }: { days: ReadonlyArray<Dai
               {areas.map((a) => (
                 <ReferenceArea key={a.phase} yAxisId="mm" x1={a.start} x2={a.end} fill={PHASE_COLORS[a.phase].fill} fillOpacity={0.08} label={{ value: a.phase, position: 'insideTop', fontSize: 11, fill: '#475569' }} />
               ))}
+              {HATCH}
+              {events.map((e) => (
+                <ReferenceArea key={`ev-${e.start}`} yAxisId="mm" x1={e.start} x2={e.end} fill="url(#stress-hatch)" fillOpacity={0.35} className="stress-area" />
+              ))}
               <XAxis dataKey="date" tickFormatter={tick} interval={interval} fontSize={11} />
               <YAxis yAxisId="mm" fontSize={11} width={36} />
               <YAxis yAxisId="rain" orientation="right" fontSize={11} width={36} />
@@ -107,6 +119,10 @@ export function MsaCharts({ days, banner, preSeason }: { days: ReadonlyArray<Dai
             <ResponsiveContainer>
               <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                {HATCH}
+                {events.map((e) => (
+                  <ReferenceArea key={`ev-${e.start}`} x1={e.start} x2={e.end} fill="url(#stress-hatch)" fillOpacity={0.35} className="stress-area" />
+                ))}
                 <XAxis dataKey="date" tickFormatter={tick} interval={halfInterval} fontSize={11} />
                 <YAxis fontSize={11} width={36} />
                 <Tooltip content={<DayTooltip />} />
@@ -125,6 +141,10 @@ export function MsaCharts({ days, banner, preSeason }: { days: ReadonlyArray<Dai
             <ResponsiveContainer>
               <LineChart data={data} margin={{ top: 8, right: 34, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                {HATCH}
+                {events.map((e) => (
+                  <ReferenceArea key={`ev-${e.start}`} x1={e.start} x2={e.end} fill="url(#stress-hatch)" fillOpacity={0.35} className="stress-area" label={{ value: 'estresse', position: 'insideTop', fontSize: 10, fill: '#991b1b' }} />
+                ))}
                 <XAxis dataKey="date" tickFormatter={tick} interval={halfInterval} fontSize={11} />
                 <YAxis domain={[0, 1]} fontSize={11} width={36} />
                 <Tooltip content={<DayTooltip />} />

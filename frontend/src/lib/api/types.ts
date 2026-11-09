@@ -218,6 +218,37 @@ export interface PhaseView {
   yieldReductionPct: number | null;
 }
 
+/** Episódio contíguo de dias de cultura com Ks abaixo do limiar (engine/stress.ts). */
+export interface StressEvent {
+  start: string;
+  end: string;
+  days: number;
+  ksMin: number;
+  ksMean: number;
+  /** Σ (ETc − ETc_adj) do evento (mm) */
+  deficitMm: number;
+  phases: { phase: YieldPhase; days: number }[];
+  dominantPhase: YieldPhase;
+  kyDominant: number;
+}
+
+export interface YieldLossPhase {
+  phase: YieldPhase;
+  factor: number;
+  lossPct: number;
+  lossScHa: number | null;
+}
+
+/** Decomposição sequencial de Ym − Ya por janela (Σ lossScHa = Ym − predita). */
+export interface YieldLossAttribution {
+  ym: number | null;
+  yieldIndex: number;
+  predictedYield: number | null;
+  totalLossScHa: number | null;
+  totalLossPct: number;
+  phases: YieldLossPhase[];
+}
+
 export type MsaRunStatus = 'SUCCEEDED' | 'FAILED' | 'NEEDS_DATA';
 export type MsaRunReason = 'WEEKLY' | 'BACKFILL' | 'MANUAL';
 export const RUN_REASON_LABELS: Record<MsaRunReason, string> = { WEEKLY: 'Semanal', BACKFILL: 'Criação da safra', MANUAL: 'Manual' };
@@ -248,6 +279,13 @@ export interface RunView {
   /** Depleção na emergência convertida para zrIni (mm) e em % de TAW(zrIni) */
   emergenceDepletionMm: number | null;
   emergenceDepletionPct: number | null;
+  /** Eventos de estresse e perda por janela (motor 2.3.0); null em runs antigas lidas pelo histórico */
+  stressEvents: StressEvent[] | null;
+  yieldLoss: YieldLossAttribution | null;
+  stressKsThreshold: number | null;
+  stressMinDays: number | null;
+  /** true quando GET /msa calculou eventos e perda na leitura (run de motor anterior) */
+  stressComputedOnRead: boolean;
   engineVersion: string;
   cultivarSnapshot: unknown;
   soilSnapshot: unknown;

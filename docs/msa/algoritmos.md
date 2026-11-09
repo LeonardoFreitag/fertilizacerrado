@@ -364,6 +364,20 @@ $$Y_a = 65 \times 0{,}736 = 47{,}84\ \text{sc/ha}$$
 
 Se a mesma safra estivesse ainda em F3 (`phasesReached = 3`), F4 entraria com fator 1 e o resultado seria o mesmo 47,84 sc/ha, marcado como predição parcial.
 
+### 6.5 Atribuição da perda por janela (decomposição sequencial)
+
+Para responder "de onde veio a perda", a diferença $Y_m - Y_a$ é distribuída entre as janelas na **ordem do ciclo**: a perda de cada janela é calculada sobre o que ainda restava depois das anteriores.
+
+$$loss_j = Y_m \cdot \left(\prod_{k<j} f_k\right)(1 - f_j), \qquad f_j = 1 - \frac{RY_j}{100}$$
+
+(fator 1 nas janelas não alcançadas, como em §6.2). A soma é telescópica:
+
+$$\sum_{j=1}^{4} \left(\prod_{k<j} f_k\right)(1 - f_j) = \sum_{j=1}^{4}\left(\prod_{k<j} f_k - \prod_{k\le j} f_k\right) = 1 - \prod_{j=1}^{4} f_j$$
+
+logo $\sum_j loss_j = Y_m\,(1 - \text{índice}) = Y_m - Y_a$ **exatamente**, sem resíduo. Com o exemplo da §6.4 ($f = [1;\ 0{,}92;\ 0{,}80;\ 1]$, $Y_m = 65$): $loss = [0;\ 5{,}20;\ 11{,}96;\ 0]$ sc/ha, total $17{,}16 = 65 - 47{,}84$. A ordem importa (F3 perde 11,96 e não 13,0 porque atua sobre os 92 % que sobraram de F2) — é a leitura natural dos "estádios sucessivos" do FAO-33 e a única decomposição aditiva coerente com o produto. Sem $Y_m$ a decomposição é devolvida em percentual ($lossPct_j = (\prod_{k<j} f_k)(1 - f_j) \times 100$).
+
+Implementação: `attributeYieldLoss(summaries, ym)` em `engine/stress.ts` → `YieldLossAttribution { ym, yieldIndex, predictedYield, totalLossScHa, totalLossPct, phases[4] }`, gravada na run (`msa_runs.yield_loss`, motor 2.3.0) e exibida na seção "Como foi a safra" do painel ("De onde veio a perda").
+
 ### Referência bibliográfica
 > DOORENBOS, J.; KASSAM, A.H. (1979). *Yield response to water*. FAO Irrigation and Drainage Paper No. 33. Rome: FAO. Equação 3.2 (redução por estádio) e combinação multiplicativa para déficits em estádios sucessivos (Capítulo 3, *Yield response to water deficit in successive growth periods*).
 
@@ -378,6 +392,44 @@ Se a mesma safra estivesse ainda em F3 (`phasesReached = 3`), F4 entraria com fa
 | `predictedYield(ym, yieldIndex)` | $Y_m \times$ índice, na unidade de $Y_m$ (§6.3) |
 
 O serviço (`src/modules/msa/msa.service.ts`, `runProcessing` → `yieldFields(cycle, expectedYield)`) chama `runDailyBalance` + `summarizeByPhase` + `cycleYieldIndex` uma vez por run e grava em `msa_runs` os campos `expectedYield` (snapshot da safra), `yieldIndex`, `phasesReached` e `predictedYield` (nulo sem $Y_m$). Os testes (`yield.test.ts`) cobrem os casos da especificação: índice 1 sem estresse; F3 0,70/Ky 1,0 → 0,70; o exemplo da §6.4 (0,736 e 47,84 sc/ha); janela não alcançada → fator 1 e `phasesReached` menor que 4; `invariants.test.ts` garante $0 \le$ `yieldIndex` $\le 1$.
+
+---
+
+## 7. Eventos de Estresse Hídrico e Severidades
+
+### 7.1 Eventos de estresse
+
+A série diária de $Ks$ (§5) é resumida em **eventos**: episódios contíguos de dias de cultura (janelas F1–F4; dias `PRE` e `COMPLETED` não contam nem conectam) com
+
+$$Ks_d < Ks_{lim}$$
+
+que duram ao menos $n_{min}$ dias. Cada evento registra início, fim, duração, $Ks_{min}$, $\overline{Ks}$, o **déficit**
+
+$$D = \sum_{d \in evento} (ETc_d - ETc_{adj,d})$$
+
+(a água que a cultura deixou de transpirar, em mm), as janelas atravessadas com os dias em cada uma, a **janela dominante** (a de mais dias; empate → a de maior $Ky$) e o $Ky$ dessa janela. Um evento que cruza a fronteira entre janelas **não é dividido**: um veranico de doze dias que começa no fim do crescimento vegetativo e termina na floração é um único episódio para quem está no campo; a lista de janelas preserva a informação por fase.
+
+Parâmetros (ambiente, gravados em cada run): $Ks_{lim}$ = `STRESS_KS_THRESHOLD` (padrão **0,70**, o limiar "crítico" do dia) e $n_{min}$ = `STRESS_MIN_DAYS` (padrão **3**). São convenção, a confirmar (`questoes-abertas.md` nº 14); o script `pnpm msa:validate-stress` confronta os eventos com os veranicos observados pela estação (Caso 2 de `validacao.md`).
+
+### 7.2 Severidades
+
+| Escopo | Critério | ok | atenção | crítico |
+|---|---|---|---|---|
+| **Dia** (gráficos, eventos) | $Ks_d$ | ≥ 0,85 | 0,70 – 0,85 | < 0,70 |
+| **Janela** (cartões, lista de safras) | $RY_j = Ky_j(1-\overline{Ks}_j)$ em % (§6.1) | < 5 % | 5 – 15 % | > 15 % |
+
+Até o motor 2.2.0 a janela também era classificada pelo $\overline{Ks}$; a mudança para a **perda** (2.3.0) faz a cor dizer o que importa ao produtor — a mesma falta de água pesa pouco na germinação ($Ky$ 0,20) e muito na floração ($Ky$ 1,00). Os limiares 5 % e 15 % são convenção documentada (nº 4, decidida em 2026-11-09): 5 % é cerca de uma saca em vinte; 15 % é a perda de uma floração com $\overline{Ks}$ 0,85.
+
+### Implementação
+`src/modules/msa/engine/stress.ts`:
+
+| Função | O que calcula |
+|---|---|
+| `detectStressEvents(series, cultivar, { ksThreshold, minDays })` | `StressEvent[]` (§7.1); `RangeError` para parâmetros inválidos |
+| `attributeYieldLoss(summaries, ym)` | decomposição sequencial da perda (§6.5) |
+| `windowSeverity(yieldReductionPct)` / `daySeverity(ks)` | severidades (§7.2); constantes `LOSS_WARNING_PCT`, `LOSS_CRITICAL_PCT`, `KS_OK`, `KS_WARNING`, espelhadas em `frontend/src/lib/msa/msa.ts` |
+
+A run grava `stressEvents`, `yieldLoss`, `stressKsThreshold` e `stressMinDays`; para runs de motor anterior, `GET /msa` calcula os dois primeiros na leitura a partir da série persistida (`stressComputedOnRead: true`). A seção "Como foi a safra" do painel e o manual (cap. 06) mostram eventos, perda por janela e produtividade esperada em linguagem simples.
 
 ---
 

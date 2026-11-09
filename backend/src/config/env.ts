@@ -37,6 +37,10 @@ const envSchema = z
     /** Perfil balanceado na entressafra: zrMax (perfil que a cultura vai explorar) ou zrIni */
     PRE_SEASON_ZR_MODE: z.enum(['zrMax', 'zrIni']).default('zrMax'),
 
+    /** Eventos de estresse (motor 2.3.0): dia de estresse quando Ks < limiar; sequência ≥ STRESS_MIN_DAYS vira evento (questão #14) */
+    STRESS_KS_THRESHOLD: z.coerce.number().gt(0, 'deve ser maior que 0').max(1, 'deve ser no máximo 1').default(0.7),
+    STRESS_MIN_DAYS: z.coerce.number().int('deve ser inteiro').min(1, 'deve ser no mínimo 1').default(3),
+
     // Usadas apenas por prisma/seed.ts; a aplicação não as lê.
     ADMIN_EMAIL: z.string().trim().toLowerCase().email().optional(),
     ADMIN_PASSWORD: z.string().optional(),

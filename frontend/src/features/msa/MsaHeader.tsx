@@ -2,7 +2,7 @@ import { Badge, Button } from '@/components/ui';
 import type { DailyRow, HarvestResponse, MsaLatest, PhaseView, RunView } from '@/lib/api/types';
 import { PHASE_LABELS, RUN_REASON_LABELS } from '@/lib/api/types';
 import { downloadCsv, slug, toCsv } from '@/lib/msa/csv';
-import { formatDate, formatDateTime, formatNumber, summariesCsv } from '@/lib/msa/msa';
+import { formatDate, formatDateTime, formatNumber, stressEventsCsv, summariesCsv } from '@/lib/msa/msa';
 import { MissingDates } from './MissingDates';
 
 const STATUS_TONE = { SUCCEEDED: 'green', NEEDS_DATA: 'amber', FAILED: 'red' } as const;
@@ -29,6 +29,10 @@ export function exportDaily(harvest: HarvestResponse, runId: string, days: Reado
 
 export function exportSummaries(harvest: HarvestResponse, run: RunView, phases: ReadonlyArray<PhaseView>): void {
   downloadCsv(`resumos-${slug(`${harvest.field.name}-${harvest.season}`)}-${run.id.slice(0, 8)}.csv`, summariesCsv(phases, run));
+}
+
+export function exportStressEvents(harvest: HarvestResponse, run: RunView): void {
+  downloadCsv(`estresses-${slug(`${harvest.field.name}-${harvest.season}`)}-${run.id.slice(0, 8)}.csv`, stressEventsCsv(run.stressEvents ?? []));
 }
 
 export function MsaHeader({
@@ -59,6 +63,10 @@ export function MsaHeader({
           <h2 className="text-lg font-semibold text-slate-800">Módulo agrometeorológico (MSA)</h2>
           <p className="text-sm text-slate-600">
             Intervalo processado {formatDate(run.dateFrom)} – {formatDate(run.dateTo)} · janela atual: <strong>{latest.currentPhase ? PHASE_LABELS[latest.currentPhase] : '—'}</strong>
+            {' · '}
+            <a href="#resumo-da-safra" className="font-medium text-brand-700 underline" data-testid="story-anchor">
+              Ir para o resumo da safra
+            </a>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -77,6 +85,9 @@ export function MsaHeader({
           </Button>
           <Button variant="secondary" size="sm" onClick={() => exportSummaries(harvest, run, latest.phases ?? [])}>
             Exportar resumos
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => exportStressEvents(harvest, run)} disabled={!run.stressEvents}>
+            Exportar estresses
           </Button>
           {canManage && (
             <Button size="sm" onClick={onReprocess} loading={reprocessing}>

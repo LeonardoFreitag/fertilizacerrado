@@ -61,6 +61,63 @@
     "predicted": "37,1 sc/ha",
     "partial": false
   },
+  "story": {
+    "ksThreshold": 0.7,
+    "minDays": 3,
+    "computedOnRead": false,
+    "events": [
+      {
+        "start": "2025-10-01",
+        "end": "2025-10-05",
+        "days": 5,
+        "dominantPhase": "F1",
+        "deficitMm": 3.236887239508994,
+        "ksMin": 0.3915827994366136
+      },
+      {
+        "start": "2025-10-30",
+        "end": "2025-11-03",
+        "days": 5,
+        "dominantPhase": "F3",
+        "deficitMm": 9.838892581676012,
+        "ksMin": 0.5989208962253849
+      },
+      {
+        "start": "2025-11-15",
+        "end": "2025-11-23",
+        "days": 9,
+        "dominantPhase": "F3",
+        "deficitMm": 25.89219921712583,
+        "ksMin": 0.4097650399847211
+      }
+    ],
+    "totalLossScHa": 27.89986032448618,
+    "totalLossPct": 42.92286203767105,
+    "lossByPhase": {
+      "F1": {
+        "lossScHa": 5.147123948169641,
+        "lossPct": 7.918652227953293
+      },
+      "F2": {
+        "lossScHa": 3.537116632164257,
+        "lossPct": 5.441717895637318
+      },
+      "F3": {
+        "lossScHa": 17.57805153025807,
+        "lossPct": 27.04315620039702
+      },
+      "F4": {
+        "lossScHa": 1.637568213894217,
+        "lossPct": 2.51933571368341
+      }
+    },
+    "predictedText": "37,0 sc/ha",
+    "lossText": "perda de 28 sacas por hectare (43 %)",
+    "biggestLoss": "A maior perda veio da floração e enchimento (−17,6 sc/ha).",
+    "firstEvent": "15 a 23 de novembro · 9 dias · floração e enchimento · a lavoura ficou sem cerca de 25 mm · esta é a fase que mais pesa na produção",
+    "eventCount": 3,
+    "dryEmergence": true
+  },
   "soilWater": {
     "preSeasonFrom": "2025-02-01",
     "preSeasonKc": 1,
@@ -137,6 +194,10 @@
     "06-11-produtividade",
     "06-12-agua-no-solo",
     "06-13-entressafra-nos-graficos",
+    "06-14-como-foi-a-safra",
+    "06-15-linha-do-tempo-da-cultura",
+    "06-16-momentos-de-estresse",
+    "06-17-de-onde-veio-a-perda",
     "06-18-exportar",
     "06-19-historico",
     "06-20-reprocessar",

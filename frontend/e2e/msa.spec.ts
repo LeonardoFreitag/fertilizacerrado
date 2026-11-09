@@ -118,6 +118,8 @@ test('safra com Ym → processamento → painel com produtividade predita → Ym
     await expect(card).toBeVisible();
     await expect(card).not.toHaveAttribute('data-severity', 'pending');
   }
+  // cor dos cartões pela perda estimada (motor 2.3.0): a legenda diz o critério
+  await expect(page.getByText('Cor pela perda estimada de produtividade')).toBeVisible();
   await expect(page.getByLabel('Linha do tempo fenológica')).toContainText('ciclo encerrado');
   await expect(page.getByTestId('msa-charts').locator('.recharts-wrapper')).toHaveCount(3, { timeout: 20_000 }); // 3 gráficos (os ícones da legenda também são svg)
 
@@ -173,7 +175,7 @@ test('safra com Ym → processamento → painel com produtividade predita → Ym
   const sumChunks: Buffer[] = [];
   for await (const c of sumStream) sumChunks.push(Buffer.from(c));
   const sumCsv = Buffer.concat(sumChunks).toString('utf8');
-  expect(sumCsv.split('\r\n')[0]).toBe('\ufeffjanela;dias;ks_medio;reducao_pct;etc_adj_mm;chuva_mm;indice_ciclo;ym_sc_ha;predita_sc_ha');
+  expect(sumCsv.split('\r\n')[0]).toBe('\ufeffjanela;dias;ks_medio;reducao_pct;etc_adj_mm;chuva_mm;indice_ciclo;ym_sc_ha;predita_sc_ha;perda_sc_ha');
   expect(sumCsv).not.toMatch(/p10|p50|p90/i);
   expect(sumCsv.trim().split('\r\n')).toHaveLength(5);
 
@@ -192,6 +194,47 @@ test('safra com Ym → processamento → painel com produtividade predita → Ym
   // histórico de runs lista a run BACKFILL com índice e predita, sem semente
   await expect(page.getByLabel('Histórico de runs')).toContainText('Criação da safra');
   await expect(page.getByLabel('Histórico de runs')).toContainText('Índice · predita');
+
+  // seção final "Como foi a safra" (motor 2.3.0): âncora do cabeçalho rola até ela
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.getByTestId('story-anchor').click();
+  const story = page.getByTestId('season-story');
+  await expect(story).toBeInViewport();
+  await expect(story.getByRole('heading', { name: 'Como foi a safra' })).toBeVisible();
+  await expect(story.getByTestId('crop-timeline')).toBeVisible();
+  await expect(story.getByText('Floração e enchimento').first()).toBeVisible();
+  await expect(story.getByTestId('story-old-run')).toHaveCount(0); // run 2.3.0: gravada, não calculada na leitura
+  await expect(story.getByTestId('story-computed-on-read')).toHaveCount(0);
+  // momentos de estresse: lista (frase completa + segmento na linha do tempo) ou a frase de "nenhum período"
+  // (a safra de 2025-11-01 em Goiânia pode não ter evento; a do manual, de 2025-10-01, tem — coberta pela captura)
+  const stressList = story.getByTestId('stress-list');
+  const stressEmpty = story.getByTestId('stress-empty');
+  await expect(stressList.or(stressEmpty)).toBeVisible();
+  const hasEvents = (await stressList.count()) > 0;
+  if (hasEvents) {
+    await expect(stressList.locator('li').first()).toContainText(/dias? · .* · a lavoura ficou sem/);
+    await expect(story.getByTestId('stress-segment').first()).toBeVisible();
+  } else {
+    await expect(stressEmpty).toContainText('Nenhum período de falta de água relevante');
+    await expect(story.getByTestId('stress-segment')).toHaveCount(0);
+  }
+  await expect(story.getByTestId('story-predicted')).toContainText('sc/ha');
+  await expect(story.getByText('de um potencial de 65 sacas')).toBeVisible();
+  await expect(story.getByTestId('story-loss')).toContainText(/perda de .* por hectare|sem perda relevante/);
+  await expect(story.getByTestId('loss-bars').locator('li')).toHaveCount(4);
+  await expect(story.getByTestId('story-biggest-loss')).toContainText(/A maior perda veio da|Nenhuma janela/);
+  await expect(story.getByTestId('story-footer')).toContainText('não considera pragas');
+  // faixas hachuradas dos eventos nos gráficos (uma por evento em cada um dos três gráficos)
+  expect(await page.getByTestId('msa-charts').locator('.stress-area').count()).toBe(hasEvents ? (await stressList.locator('li').count()) * 3 : 0);
+  // CSV de estresses
+  const [stress] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Exportar estresses' }).click()]);
+  expect(stress.suggestedFilename()).toMatch(/^estresses-.*\.csv$/);
+  const stressStream = await stress.createReadStream();
+  const stressChunks: Buffer[] = [];
+  for await (const c of stressStream) stressChunks.push(Buffer.from(c));
+  const stressCsv = Buffer.concat(stressChunks).toString('utf8');
+  expect(stressCsv.split('\r\n')[0]).toBe('\ufeffinicio;fim;dias;janela_dominante;janelas;ks_min;ks_medio;deficit_mm');
+  expect(stressCsv.trim().split('\r\n').length).toBe(hasEvents ? (await stressList.locator('li').count()) + 1 : 1);
 });
 
 test('nova cultivar nasce da referência e marca divergências', async ({ page }) => {

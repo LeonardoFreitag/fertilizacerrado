@@ -178,6 +178,6 @@ describe('predictedYield', () => {
 
 describe('versão do motor', () => {
   it('é 2.2.0 (entressafra no balanço; interface compatível)', () => {
-    expect(ENGINE_VERSION).toBe('2.2.0');
+    expect(ENGINE_VERSION).toBe('2.3.0');
   });
 });

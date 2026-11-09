@@ -1,12 +1,17 @@
 /** Funções puras do painel MSA: severidade, faixas fenológicas, produtividade, formatação, safra sugerida. */
-import type { DailyRow, Phase, PhaseView, RunView, YieldPhase } from '../api/types';
+import type { DailyRow, Phase, PhaseView, RunView, StressEvent, YieldLossAttribution, YieldPhase } from '../api/types';
 // (RunView também alimenta soilWaterTexts)
 import { toCsv } from './csv';
 
 /**
- * Limiares de severidade do Ks médio da janela (fluxo operacional de docs/modulos/msa.md:
- * Ks < 0,85 = estresse moderado; < 0,70 = severo).
+ * Limiares de severidade — espelho das constantes do motor
+ * (`backend/src/modules/msa/engine/stress.ts`; convenção registrada em
+ * docs/msa/questoes-abertas.md #4 e #14). Janela: pela perda estimada de
+ * produtividade (%); dia: pelo Ks. Sem pacote compartilhado, os valores são
+ * repetidos aqui e fixados por teste dos dois lados.
  */
+export const LOSS_WARNING_PCT = 5;
+export const LOSS_CRITICAL_PCT = 15;
 export const KS_OK = 0.85;
 export const KS_WARNING = 0.7;
 
@@ -19,12 +24,28 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
   pending: 'não alcançada',
 };
 
-export function severity(ksMean: number | null | undefined): Severity {
-  if (ksMean == null || Number.isNaN(ksMean)) return 'pending';
-  if (ksMean >= KS_OK) return 'ok';
-  if (ksMean >= KS_WARNING) return 'warning';
+/** Severidade da janela pela redução potencial de produtividade (%); nulo = não alcançada. */
+export function windowSeverity(yieldReductionPct: number | null | undefined): Severity {
+  if (yieldReductionPct == null || Number.isNaN(yieldReductionPct)) return 'pending';
+  if (yieldReductionPct < LOSS_WARNING_PCT) return 'ok';
+  if (yieldReductionPct <= LOSS_CRITICAL_PCT) return 'warning';
   return 'critical';
 }
+
+/** Severidade do dia pelo Ks (gráficos e eventos). */
+export function daySeverity(ks: number): Severity {
+  if (ks >= KS_OK) return 'ok';
+  if (ks >= KS_WARNING) return 'warning';
+  return 'critical';
+}
+
+/** Nomes das janelas em linguagem do campo (seção "Como foi a safra"). */
+export const PHASE_FIELD_LABELS: Record<YieldPhase, string> = {
+  F1: 'Germinação',
+  F2: 'Crescimento',
+  F3: 'Floração e enchimento',
+  F4: 'Maturação',
+};
 
 export interface PhaseRange {
   phase: YieldPhase;
@@ -236,7 +257,8 @@ export function formatScHa(value: number | null | undefined): string {
  * CSV de resumos: uma linha por janela; índice, Ym e predita repetidos em todas as
  * linhas (vazios quando a run não tem Ym). Sem percentis nem linha final.
  */
-export function summariesCsv(phases: ReadonlyArray<PhaseView>, run: Pick<RunView, 'yieldIndex' | 'expectedYield' | 'predictedYield'>): string {
+export function summariesCsv(phases: ReadonlyArray<PhaseView>, run: Pick<RunView, 'yieldIndex' | 'expectedYield' | 'predictedYield'> & { yieldLoss?: YieldLossAttribution | null }): string {
+  const loss = (phase: YieldPhase) => run.yieldLoss?.phases.find((p) => p.phase === phase)?.lossScHa ?? null;
   return toCsv(phases, [
     { header: 'janela', value: (p) => p.phase },
     { header: 'dias', value: (p) => p.days },
@@ -247,5 +269,20 @@ export function summariesCsv(phases: ReadonlyArray<PhaseView>, run: Pick<RunView
     { header: 'indice_ciclo', value: () => run.yieldIndex },
     { header: 'ym_sc_ha', value: () => run.expectedYield },
     { header: 'predita_sc_ha', value: () => run.predictedYield },
+    { header: 'perda_sc_ha', value: (p) => loss(p.phase) },
+  ]);
+}
+
+/** CSV de eventos de estresse: uma linha por evento (só o cabeçalho sem eventos). */
+export function stressEventsCsv(events: ReadonlyArray<StressEvent>): string {
+  return toCsv(events, [
+    { header: 'inicio', value: (e) => e.start },
+    { header: 'fim', value: (e) => e.end },
+    { header: 'dias', value: (e) => e.days },
+    { header: 'janela_dominante', value: (e) => e.dominantPhase },
+    { header: 'janelas', value: (e) => e.phases.map((p) => `${p.phase}:${p.days}`).join(' ') },
+    { header: 'ks_min', value: (e) => e.ksMin },
+    { header: 'ks_medio', value: (e) => e.ksMean },
+    { header: 'deficit_mm', value: (e) => e.deficitMm },
   ]);
 }

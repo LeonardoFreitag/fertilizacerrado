@@ -68,18 +68,27 @@ segunda ordem no Cerrado (vento fraco), mas vale uma nota metodológica.
 
 ---
 
-## 4. Limiares de severidade do Ks — 0,85 / 0,70
+## 4. Limiares de severidade — **decidido (2026-11-09)**
 
-**Implementado:** classificação visual por janela: Ks médio ≥ 0,85 "ok";
-0,70–0,85 "atenção"; < 0,70 "crítico". Esses valores são **convenção de
-interface**, escolhidos durante o projeto, sem referência bibliográfica.
+**Decisão (change `add-stress-timeline-yield-forecast`, motor 2.3.0):** a
+severidade da **janela** (cor dos cartões e da lista de safras) passa a ser pela
+**perda potencial de produtividade** $RY_j = Ky_j(1-\overline{Ks}_j)$: ok < 5 %,
+atenção 5–15 %, crítico > 15 % (`LOSS_WARNING_PCT`, `LOSS_CRITICAL_PCT` em
+`engine/stress.ts`, espelhadas no frontend). A severidade do **dia** continua
+pelo Ks (0,85 / 0,70: linhas de referência dos gráficos e limiar padrão dos
+eventos). Motivo: a mesma falta de água pesa pouco na germinação (Ky 0,20) e
+muito na floração (Ky 1,00); a cor deve dizer o que importa ao produtor.
 
-**Questão:** confirmar, ajustar ou derivar de outro critério (ex.: redução de
-produtividade Ky × (1 − Ks) acima de 10 % / 25 %).
+**Natureza:** os quatro números continuam **convenção de interface** sem fonte
+bibliográfica — 5 % ≈ uma saca em vinte; 15 % ≈ a perda de uma floração com
+Ks̄ 0,85. A confirmar com o professor Adilson / a pesquisadora, com a saída de
+`pnpm msa:validate-stress` sobre a safra histórica (Caso 2).
 
-**Onde:** `frontend/src/features/msa/severity.ts`, `docs/modulos/msa.md`.
+**Onde:** `backend/src/modules/msa/engine/stress.ts`,
+`frontend/src/lib/msa/msa.ts`, `docs/msa/algoritmos.md` §7.2.
 
-**Se mudar:** constantes no frontend; sem reprocessamento.
+**Se mudar:** constantes nos dois lados (teste de valor fixo em cada um); sem
+reprocessamento.
 
 ---
 
@@ -376,7 +385,62 @@ emergência") precisaria de nova captura.
 
 ---
 
+## 14. Parâmetros dos eventos de estresse — `STRESS_KS_THRESHOLD` e `STRESS_MIN_DAYS`
+
+**Implementado (provisório, 2026-11-09):** um "momento de estresse" (motor
+2.3.0, `algoritmos.md` §7.1) é uma sequência contígua de dias de cultura com
+Ks < **0,70** que dura ao menos **3 dias**; não é dividido na fronteira entre
+janelas. Os dois valores vêm do ambiente e são gravados em cada run
+(`stressKsThreshold`, `stressMinDays`).
+
+**Questão:** 0,70 é o limiar "crítico" do dia já usado nos gráficos e 3 dias é
+um mínimo para filtrar oscilações de um dia — ambos escolhidos no projeto, sem
+fonte bibliográfica. Confirmar com o professor Adilson / a pesquisadora se o
+limiar deve ser o do RAW (Ks < 1, qualquer déficit) ou um valor intermediário,
+e qual duração mínima faz sentido agronômico para a soja no Cerrado.
+
+**Como avaliar:** `pnpm msa:validate-stress -- --harvest <id> [--station <código>]
+[--ks-threshold 0.7] [--min-days 3]` lista os eventos e os veranicos observados
+pela estação (dias consecutivos com chuva < 10 mm) e a sobreposição — variar os
+parâmetros mostra a sensibilidade (Caso 2 de `validacao.md`).
+
+**Onde:** `backend/src/config/env.ts`, `config/stress.ts`,
+`engine/stress.ts`, `.env.example`.
+
+**Se mudar:** só `.env` + reprocessar (runs antigas guardam os parâmetros da
+época; `GET /msa` usa os atuais ao calcular na leitura para runs ≤ 2.2.0).
+
+---
+
 ## Registro de decisões
+
+### 2026-11-09 — Linha do tempo de estresse e produtividade esperada para o produtor
+
+**Decisão:** pedido do professor Adilson na reunião de 2026-11-02 ("ao final do
+painel, uma linha do tempo da cultura apontando os prováveis momentos de
+estresse e a produtividade esperada, pensando em como o produtor vai ler"),
+implementado na change `add-stress-timeline-yield-forecast`. A série de Ks
+passa a ser resumida em **eventos de estresse** (§7.1), a diferença Ym − Ya é
+**atribuída às janelas** por decomposição sequencial com soma exata (§6.5) e o
+painel ganha a seção final **"Como foi a safra"**, igual para produtor,
+agrônomo e administrador. Fecha a série de changes decorrente da reunião.
+
+**Consequências:**
+- `ENGINE_VERSION` 2.2.0 → 2.3.0 (campos novos na run; resultados numéricos
+  inalterados); migration aditiva (`stress_events`, `yield_loss`,
+  `stress_ks_threshold`, `stress_min_days`). Nada obrigatório após o deploy:
+  `GET /msa` calcula a leitura das runs 2.2.0 a partir da série persistida
+  (`stressComputedOnRead`); reprocessar grava.
+- Questão nº 4 decidida: severidade da janela pela **perda** (5 % / 15 %), do
+  dia pelo Ks (0,85 / 0,70) — convenção documentada, a confirmar. Nova questão
+  nº 14 (parâmetros dos eventos, 0,70 e 3 dias).
+- Caso 2 do protocolo ganha eventos × veranicos observados
+  (`pnpm msa:validate-stress`, descritivo).
+- Manual: cap. 06 (seção "Como foi a safra", cartões coloridos pela perda) e
+  cap. 08 (evento de estresse, perda por janela, severidade).
+- Fora do escopo (Fase 3): projeção climatológica do restante do ciclo, alertas,
+  relatório PDF da safra (a seção é desenhada para ser sua primeira página).
+
 
 ### 2026-11-09 — Balanço hídrico com entressafra (spin-up desde 1º de fevereiro)
 

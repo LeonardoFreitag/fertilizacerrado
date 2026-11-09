@@ -14,6 +14,7 @@ import { PhaseCards } from './PhaseCards';
 import { PhaseTimeline } from './PhaseTimeline';
 import { MissingDates } from './MissingDates';
 import { RunsTable } from './RunsTable';
+import { SeasonStory } from './SeasonStory';
 import { SoilWaterAtEmergence } from './SoilWaterAtEmergence';
 import { YieldSummary } from './YieldSummary';
 import { useDailySeries, useJob, useMsaLatest, useMsaRuns, useProcessHarvest } from './api';
@@ -153,12 +154,25 @@ export function MsaPanel({ harvest, initialJobId, createdAt, canManage }: { harv
                 days={chartDays}
                 banner={selectedRunId && selectedRunId !== latest.data.run.id ? { text: `Visualizando run de ${formatDateTime(selectedRun.startedAt)}`, onReset: () => setSelectedRunId(null) } : null}
                 preSeason={{ available: hasPreSeason, enabled: showPreSeason && hasPreSeason, onToggle: () => setShowPreSeason((v) => !v) }}
+                events={selectedRun.stressEvents ?? []}
               />
             </ErrorBoundary>
           )}
           {runs.data && (
             <ErrorBoundary title="Histórico indisponível.">
               <RunsTable runs={runs.data} selectedRunId={viewingRunId ?? null} latestRunId={latest.data.run.id} onSelect={(id) => setSelectedRunId(id)} />
+            </ErrorBoundary>
+          )}
+          {selectedRun && daily.data && (
+            <ErrorBoundary title="Resumo da safra indisponível.">
+              <SeasonStory
+                run={selectedRun}
+                phases={selectedRunId && selectedRunId !== latest.data.run.id ? null : latest.data.phases ?? []}
+                days={daily.data.days}
+                currentPhase={selectedRunId && selectedRunId !== latest.data.run.id ? (daily.data.days.at(-1)?.phase ?? null) : latest.data.currentPhase}
+                harvest={harvest}
+                canManage={canManage}
+              />
             </ErrorBoundary>
           )}
         </>

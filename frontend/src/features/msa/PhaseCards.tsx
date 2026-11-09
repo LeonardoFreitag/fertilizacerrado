@@ -1,6 +1,6 @@
 import type { Phase, PhaseView, YieldPhase } from '@/lib/api/types';
 import { PHASE_LABELS, YIELD_PHASES } from '@/lib/api/types';
-import { formatMm, formatNumber, formatPct, severity, SEVERITY_LABELS, type Severity } from '@/lib/msa/msa';
+import { formatMm, formatNumber, formatPct, SEVERITY_LABELS, windowSeverity, type Severity } from '@/lib/msa/msa';
 
 const TONE: Record<Severity, string> = {
   ok: 'border-brand-300 bg-brand-50',
@@ -16,12 +16,12 @@ export function PhaseCards({ phases, currentPhase }: { phases: ReadonlyArray<Pha
     <div>
       <div className="mb-2 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold text-slate-800">Janelas fenológicas</h2>
-        <span className="text-xs text-slate-500">Ks médio: ≥ 0,85 ok · 0,70–0,85 atenção · &lt; 0,70 crítico</span>
+        <span className="text-xs text-slate-500">Cor pela perda estimada de produtividade: &lt; 5 % ok · 5–15 % atenção · &gt; 15 % crítico</span>
       </div>
       <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Cartões por janela">
         {YIELD_PHASES.map((phase: YieldPhase) => {
           const p = byPhase.get(phase);
-          const sev = severity(p?.ksMean);
+          const sev = windowSeverity(p?.yieldReductionPct);
           const isCurrent = currentPhase === phase;
           return (
             <li key={phase} data-testid={`phase-card-${phase}`} data-severity={sev} className={`rounded-lg border p-4 ${TONE[sev]} ${isCurrent ? 'ring-2 ring-slate-400' : ''}`}>

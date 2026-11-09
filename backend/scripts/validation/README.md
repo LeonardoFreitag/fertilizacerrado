@@ -33,6 +33,15 @@ Não há script próprio: o Caso 2 usa a exportação CSV do painel (série diá
 
 `examples/synthetic-cerrado-season.csv` é a série sintética de 150 dias (`syntheticSeason(150, 2026)` em `src/modules/msa/synthetic-season.ts`), usada pelos testes de serviço como safra de referência sem dados ERA5-Land.
 
+## Momentos de estresse × veranicos (Caso 2, complemento; questão nº 14)
+
+```bash
+DATABASE_URL=postgresql://... pnpm msa:validate-stress -- --harvest <uuid> --station 83423 --out dados/stress.csv
+pnpm msa:validate-stress -- --harvest <uuid> --ks-threshold 0.8 --min-days 5   # sensibilidade
+```
+
+Lê a última run da safra, recalcula os eventos (`detectStressEvents`) e confronta com os veranicos da estação (`station_daily_obs`, chuva < `--dry-mm` por ≥ `--min-days`). Sem `--station`, usa a estação da calibração QM ativa da célula. Funções puras em `stress-methods.ts` (testadas).
+
 ## Graus-dia (Caso 5 — residual × Ometto × Ometto com TB)
 
 ```bash

@@ -4,6 +4,7 @@ import * as engine from './index';
 import { mulberry32, uniform } from './test-fixtures';
 import type { CultivarParams, DailyWeather, SoilParams } from './types';
 import { runDailyBalance } from './water-balance';
+import { attributeYieldLoss, detectStressEvents } from './stress';
 import { cycleYieldIndex, summarizeByPhase } from './yield';
 
 const CASES = 200;
@@ -103,6 +104,26 @@ describe('invariantes do motor com entradas aleatórias (semente fixa)', () => {
       expect(yieldIndex).toBeLessThanOrEqual(1);
       expect(phasesReached).toBeGreaterThanOrEqual(0);
       expect(phasesReached).toBeLessThanOrEqual(4);
+
+      // Perda por janela: soma telescópica fecha em Ym − predita; eventos dentro da cultura, sem sobreposição.
+      const summaries = summarizeByPhase(rows, cultivar);
+      const ym = 20 + rand() * 80;
+      const loss = attributeYieldLoss(summaries, ym);
+      expect(loss.phases.reduce((acc, p) => acc + p.lossScHa!, 0)).toBeCloseTo(ym - loss.predictedYield!, 9);
+      expect(loss.predictedYield).toBeCloseTo(ym * yieldIndex, 9);
+      for (const p of loss.phases) expect(p.lossScHa).toBeGreaterThanOrEqual(-1e-12);
+      const minDays = 1 + Math.floor(rand() * 5);
+      const events = detectStressEvents(rows, cultivar, { ksThreshold: uniform(rand, 0.3, 1), minDays });
+      const cropDates = rows.filter((r) => r.phase !== 'PRE' && r.phase !== 'COMPLETED').map((r) => r.date);
+      // (as datas do fixture são rótulos cíclicos, não um calendário: a não sobreposição é checada pela soma dos dias)
+      expect(events.reduce((acc, e) => acc + e.days, 0)).toBeLessThanOrEqual(cropDates.length);
+      for (const e of events) {
+        expect(e.days).toBeGreaterThanOrEqual(minDays);
+        expect(cropDates).toContain(e.start);
+        expect(cropDates).toContain(e.end);
+        expect(e.deficitMm).toBeGreaterThanOrEqual(0);
+        expect(e.phases.reduce((acc, p) => acc + p.days, 0)).toBe(e.days);
+      }
     }
 
     expect(rowsChecked).toBeGreaterThan(CASES * 20);

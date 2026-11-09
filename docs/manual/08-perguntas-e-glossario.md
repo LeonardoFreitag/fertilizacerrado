@@ -113,6 +113,10 @@ Quanta água falta no solo para ele voltar à capacidade de campo, em milímetro
 
 O período sem lavoura que o sistema calcula antes da safra: do 1º de fevereiro anterior à emergência, com o solo cheio, até a véspera da emergência. Nesses dias não há planta, então os graus-dia não contam e a evaporação é a do solo coberto de palhada, com parâmetros padrão iguais para todos os talhões. O nome técnico, *spin-up*, quer dizer "dar partida": a conta roda pela entressafra só para chegar à emergência com a água do solo calculada. Nos gráficos, a entressafra aparece como uma faixa cinza quando a caixa **Mostrar entressafra** está marcada; na exportação, as linhas vêm com Fase `PRE`. Veja [Água no solo na emergência](#água-no-solo-na-emergência).
 
+### Evento de estresse (momento de estresse)
+
+Período de pelo menos três dias seguidos em que o [Ks](#ks-coeficiente-de-estresse-hídrico) ficou abaixo de 0,70 — a lavoura usou menos de 70% da água de que precisava. O painel lista esses momentos na seção **Como foi a safra**, com o período, a duração, a fase em que aconteceram e a água que faltou, em milímetros. Um momento que começa numa fase e termina na seguinte aparece inteiro. Veja o [capítulo 6](06-painel-agrometeorologico.md#como-foi-a-safra).
+
 ### ERA5-Land
 
 Base de dados de clima do programa europeu Copernicus. Ela reconstrói, para o mundo todo, a temperatura, a chuva, o vento e a radiação solar de cada dia, combinando satélites, estações e modelos. Os dados vêm em quadrados de cerca de 9 km de lado e são publicados com uns cinco dias de atraso. É a fonte de clima do sistema.
@@ -153,6 +157,10 @@ O número mais importante do painel. Vai de 0 a 1. Com Ks igual a 1, a lavoura t
 
 Número que diz quanto a produtividade cai quando falta água em cada janela. Na soja, a floração e o enchimento de grãos têm o maior Ky: é quando a falta de água mais custa.
 
+### Perda por fase (de onde veio a perda)
+
+Divisão da diferença entre a produtividade potencial e a predita entre as quatro fases, em sacas por hectare. A conta segue a ordem do ciclo — a perda de cada fase é calculada sobre o que restava depois das anteriores —, e as quatro parcelas somadas dão exatamente a perda total. Aparece em barras na seção **Como foi a safra**; a barra maior responde à pergunta "de onde veio a perda". Veja o [capítulo 6](06-painel-agrometeorologico.md#produtividade-esperada-e-de-onde-veio-a-perda).
+
 ### Produtividade potencial (Ym)
 
 A produtividade que a lavoura alcançaria se não faltasse água em nenhum momento do ciclo, em sacas por hectare. Quem informa é o agrônomo, no cadastro da safra ou depois, pela página da safra. É o ponto de partida da estimativa do painel. Nas telas aparece como **Ym**.
@@ -164,6 +172,10 @@ A produtividade estimada da safra, em sacas por hectare, considerando só o efei
 ### Redução potencial de produtividade
 
 Estimativa de quanto da produtividade pode ter sido perdida por falta de água em uma janela, em porcentagem. Combina o Ks médio da janela com o Ky dela. É uma estimativa do efeito da água apenas. Não considera pragas, doenças, fertilidade nem manejo. As reduções das quatro janelas se combinam no [índice do ciclo](#índice-do-ciclo).
+
+### Severidade (ok, atenção, crítico)
+
+Cor e selo dos cartões das janelas e da lista de safras. Vêm da [redução potencial de produtividade](#redução-potencial-de-produtividade) da janela: abaixo de 5% é **ok** (verde), de 5% a 15% é **atenção** (amarelo), acima de 15% é **crítico** (vermelho); **não alcançada** (cinza) é a janela a que a lavoura ainda não chegou. Nos gráficos e nos momentos de estresse, a referência é o Ks do dia: 0,85 e 0,70.
 
 ### TAW e RAW
 

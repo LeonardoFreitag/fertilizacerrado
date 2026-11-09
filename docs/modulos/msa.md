@@ -96,6 +96,8 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
 
 **Persistência (reprodutibilidade):** cada execução gera uma run em `msa_runs` com status (`SUCCEEDED` / `FAILED` / `NEEDS_DATA`), intervalo, `cultivarSnapshot` (os 16 parâmetros, `tUpper` possivelmente nulo, + id/nome/cultura como estavam), `soilSnapshot` (θFC, θWP, altitude, `soilDefaults`), `engineVersion` (`ENGINE_VERSION` do motor, semver — `2.2.0` desde a entressafra (2026-11-09); `2.1.0` Ometto e `2.0.0` ficam no histórico), os campos de produtividade: `expectedYield` (Ym da safra no momento), `yieldIndex` (índice do ciclo), `phasesReached` (0–4) e `predictedYield` (nulo sem Ym; todos nulos em `NEEDS_DATA`/`FAILED`), e os campos da entressafra (`preSeasonFrom`, `preSeasonKc`, `preSeasonZr`, `emergenceDepletionMm`, `emergenceDepletionPct` — migration aditiva `add_preseason_water_balance`; nulos em runs < 2.2.0). O motor recebe o snapshot, não o registro atual da cultivar. A série diária vai para `msa_daily_results` (uma linha por dia, **inclusive os dias `PRE` da entressafra**, colunas de `DailyBalanceRow`; a coluna `phase` é texto) e os resumos por janela (sem percentis) para `msa_phase_summaries`. Reprocessar cria uma run nova; o histórico é mantido; `harvests.latestRunId` aponta para a última run `SUCCEEDED`. Mesmos dados + mesmos snapshots ⇒ resultados idênticos (verificado no roteiro `e2e-msa.sh`).
 
+**Eventos de estresse e perda por janela (motor 2.3.0, `algoritmos.md` §6.5 e §7):** na mesma run, `detectStressEvents(series, cultivar, stressParams())` (`config/stress.ts` → `STRESS_KS_THRESHOLD` 0,70 / `STRESS_MIN_DAYS` 3) resume a série de Ks em eventos (sequências contíguas de dias de cultura com Ks < limiar, ≥ mínimo de dias, não divididas na fronteira de janela) e `attributeYieldLoss(summaries, expectedYield)` decompõe Ym − Ya por janela com soma exata; ambos gravados em `msa_runs` com os parâmetros. Runs ≤ 2.2.0: `GET /msa` calcula na leitura (`stressComputedOnRead: true`). O painel mostra tudo na seção final "Como foi a safra" (`docs/modulos/frontend.md`).
+
 **Predição de produtividade (`algoritmos.md` §6):** `cycleYieldIndex(summaries)` devolve `{ yieldIndex, phasesReached, factors }`, com `yieldIndex = Π_j [1 − Ky_j·(1 − Ks̄_j)]` sobre as janelas com dias e fator 1 nas não alcançadas ("considera o restante do ciclo sem estresse"); `predictedYield = expectedYield × yieldIndex`. `GET /msa` devolve ainda `cultivarChangedSinceRun` (função pura que compara a **união** das chaves de `CultivarParams` do `cultivarSnapshot` e da cultivar atual; chave ausente de um lado conta como `null`) para o aviso do painel. Por isso uma run do motor 2.0.0 — cujo snapshot não tem `tUpper` — acusa divergência e o painel sugere reprocessar; é o comportamento desejado após o deploy de 2.1.0 ("Processar todas as safras ativas" em `/admin`). Após o deploy de 2.2.0, as runs antigas continuam válidas, mas sem entressafra: o painel sugere reprocessar e as safras cujo talhão não tem ERA5 desde fevereiro ficam `NEEDS_DATA` até o backfill (README raiz, nota pós-deploy). A predição é um valor único, sem faixa de incerteza.
 
 ---
@@ -175,6 +177,16 @@ Cada run registra `reason` e `jobId` (nulo no inline) e `qmCalibrationId` — a 
 | `phasesReached` | Int? | Janelas com dias (0–4); < 4 ⇒ predição parcial |
 | `predictedYield` | Float? | Ym × índice (sc/ha); nulo sem Ym |
 
+### msa_runs (eventos de estresse e perda por janela — motor 2.3.0, migration aditiva `add_stress_timeline`)
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `stressEvents` | Json? | `StressEvent[]` (`algoritmos.md` §7.1): início, fim, dias, Ks mín/médio, déficit (mm), janelas atravessadas, janela dominante e seu Ky |
+| `yieldLoss` | Json? | `YieldLossAttribution` (§6.5): fatores, perda por janela em % e sc/ha, total = Ym − predita |
+| `stressKsThreshold`, `stressMinDays` | Float?, Int? | Parâmetros usados (snapshot de `STRESS_KS_THRESHOLD` / `STRESS_MIN_DAYS`; padrões 0,70 e 3) |
+
+> Nulos em runs de motor anterior a 2.3.0: `GET /msa` então calcula `stressEvents` e `yieldLoss` na leitura (série persistida + `cultivarSnapshot` + resumos + parâmetros atuais) e responde `stressComputedOnRead: true`, sem gravar; `GET /msa/runs` devolve só o gravado. Severidade da janela no painel passa a ser pela perda (`windowSeverity`: < 5 % ok, 5–15 % atenção, > 15 % crítico — questão nº 4); do dia pelo Ks (`daySeverity`).
+
 ### msa_runs (campos da entressafra — motor 2.2.0, migration aditiva `add_preseason_water_balance`)
 
 | Campo | Tipo | Descrição |
@@ -204,7 +216,7 @@ Escopo de acesso herdado da safra (404 fora dele); `PRODUTOR` só leitura (403 n
 | PATCH | `/api/v1/harvests/:id` | `status`, `notes`, `season`, `expectedYield` (não recalcula runs) | AGRONOMO, ADMIN |
 | POST | `/api/v1/harvests/:id/msa/process` | Enfileira o (re)processamento: **202** `{ jobId, queue, status: "queued" }`; 404 fora do escopo | AGRONOMO, ADMIN |
 | POST | `/api/v1/harvests/:id/msa/process?sync=true` | Processa inline: 201 run `SUCCEEDED` com resumos; 200 run `NEEDS_DATA` com `missingDates`; 422 `MISSING_FIELD_ALTITUDE`; 500 `MSA_PROCESSING_FAILED` (run `FAILED` gravada); 403 `SYNC_ADMIN_ONLY` para não-ADMIN | ADMIN |
-| GET | `/api/v1/harvests/:id/msa` | Última run `SUCCEEDED`: metadados, snapshots, `expectedYield`/`yieldIndex`/`predictedYield`/`phasesReached`, `preSeasonFrom`/`preSeasonKc`/`preSeasonZr`/`emergenceDepletionMm`/`emergenceDepletionPct` (nulos em runs < 2.2.0), 4 janelas (sem percentis), `currentPhase` (nunca `PRE`), `cultivarChangedSinceRun`; 404 `NO_MSA_RESULT` | Todos |
+| GET | `/api/v1/harvests/:id/msa` | Última run `SUCCEEDED`: metadados, snapshots, `expectedYield`/`yieldIndex`/`predictedYield`/`phasesReached`, `preSeasonFrom`/`preSeasonKc`/`preSeasonZr`/`emergenceDepletionMm`/`emergenceDepletionPct` (nulos em runs < 2.2.0), `stressEvents`/`yieldLoss`/`stressKsThreshold`/`stressMinDays`/`stressComputedOnRead` (motor 2.3.0; calculados na leitura para runs anteriores), 4 janelas (sem percentis), `currentPhase` (nunca `PRE`), `cultivarChangedSinceRun`; 404 `NO_MSA_RESULT` | Todos |
 | GET | `/api/v1/harvests/:id/msa/daily?runId=&includePreSeason=` | Série diária da run (padrão: última). `includePreSeason=false` (padrão) devolve só os dias de cultura, da emergência a `dateTo`; `true` inclui os dias `PRE` desde `dateFrom`; outro valor → 400 identificando `includePreSeason` | Todos |
 | GET | `/api/v1/harvests/:id/msa/runs` | Histórico de runs (sem séries), mais recente primeiro | Todos |
 | GET | `/api/v1/admin/jobs/queues` | Contagens por fila (`waiting`, `active`, `completed`, `failed`, `delayed`, `waiting-children`) e `weekly.nextRun` | ADMIN |

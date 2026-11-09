@@ -86,16 +86,18 @@ Cada janela tem um cartão com o resumo do que aconteceu nela.
 
 ### As cores
 
-A cor do cartão vem do **Ks médio** da janela:
+A cor do cartão vem da **redução potencial de produtividade** da janela — quanto da safra a falta de água naquela fase pode ter custado:
 
-| Cor | Selo | Ks médio | Leitura |
+| Cor | Selo | Redução estimada | Leitura |
 |---|---|---|---|
-| Verde | **ok** | 0,85 ou mais | Água suficiente, ou falta pequena |
-| Amarelo | **atenção** | de 0,70 a 0,85 | Falta de água moderada |
-| Vermelho | **crítico** | abaixo de 0,70 | Falta de água severa |
+| Verde | **ok** | abaixo de 5% | Perda pequena ou nenhuma |
+| Amarelo | **atenção** | de 5% a 15% | Perda moderada |
+| Vermelho | **crítico** | acima de 15% | Perda grande |
 | Cinza | **não alcançada** | — | A lavoura ainda não chegou a essa janela |
 
-No exemplo, dois cartões estão vermelhos e dois verdes: F1 com Ks 0,60 (**crítico** — o talhão entrou na safra com pouca água no solo, veja o cartão [Água no solo na emergência](#água-no-solo-na-emergência)), F2 com Ks 0,93 (**ok**), F3 com Ks 0,69 (**crítico**, um veranico na floração) e F4 com Ks 0,89<!-- valor:phases.F4.ksMean|2 --> (**ok**).
+Repare que a cor não vem do Ks sozinho. A mesma falta de água pesa pouco na germinação e muito na floração, e é isso que a cor mostra.
+
+No exemplo, um cartão está vermelho, dois amarelos e um verde: F1 com redução de 7,9<!-- valor:phases.F1.yieldReductionPct|1 -->% (**atenção** — o Ks ficou baixo, 0,60, porque o talhão entrou na safra com pouca água no solo, veja o cartão [Água no solo na emergência](#água-no-solo-na-emergência); mas a germinação pesa pouco na produção), F2 com 5,9<!-- valor:phases.F2.yieldReductionPct|1 -->% (**atenção**), F3 com 31,2% (**crítico**, um veranico na floração) e F4 com 4,2% (**ok**, Ks 0,89<!-- valor:phases.F4.ksMean|2 -->).
 
 ### Como ler um cartão
 
@@ -103,9 +105,9 @@ No exemplo, dois cartões estão vermelhos e dois verdes: F1 com Ks 0,60 (**crí
 
 O cartão de F3, floração e enchimento, mostra:
 
-- **Ks médio: 0,69<!-- valor:phases.F3.ksMean|2 -->.** Na média dos 29<!-- valor:phases.F3.days|0 --> dias da janela, a lavoura usou 69% da água de que precisava. O valor fica abaixo de 0,70, por isso o cartão está em **crítico**.
+- **Ks médio: 0,69<!-- valor:phases.F3.ksMean|2 -->.** Na média dos 29<!-- valor:phases.F3.days|0 --> dias da janela, a lavoura usou 69% da água de que precisava.
 
-- **Redução potencial de produtividade: 31,2<!-- valor:phases.F3.yieldReductionPct|1 -->%.** É a estimativa de quanto da produtividade pode ter sido perdida nessa janela só pela falta de água. Ela combina o Ks médio com a sensibilidade da janela, o [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse).
+- **Redução potencial de produtividade: 31,2<!-- valor:phases.F3.yieldReductionPct|1 -->%.** É a estimativa de quanto da produtividade pode ter sido perdida nessa janela só pela falta de água. Ela combina o Ks médio com a sensibilidade da janela, o [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse). Como passa de 15%, o cartão está em **crítico**.
 
 - **ETc ajustada acumulada: 113,4<!-- valor:phases.F3.etcAdjAccum|1 --> mm.** A água que a lavoura realmente usou na janela.
 
@@ -117,7 +119,7 @@ Os termos estão no glossário: [redução potencial de produtividade](08-pergun
 
 ### Por que a mesma falta de água pesa diferente
 
-Compare F1 e F3 no exemplo. Os dois cartões estão em crítico, com Ks médio parecido (0,60 e 0,69). Mas a redução estimada em F1 é de 7,9%, e em F3 chega a 31,2%. Já F4, com Ks 0,89, perde só 4,2<!-- valor:phases.F4.yieldReductionPct|1 -->%.
+Compare F1 e F3 no exemplo. O Ks médio é parecido (0,60 e 0,69), mas a redução estimada em F1 é de 7,9%, e em F3 chega a 31,2%: por isso F1 está em atenção e F3 em crítico. Já F4, com Ks 0,89, perde só 4,2<!-- valor:phases.F4.yieldReductionPct|1 -->%.
 
 A diferença está na sensibilidade da planta. Na floração e no enchimento de grãos a soja é muito mais sensível à falta de água que na maturação. O sistema leva isso em conta por meio do [Ky](08-perguntas-e-glossario.md#ky-sensibilidade-ao-estresse) de cada janela.
 
@@ -187,6 +189,8 @@ Se o cartão disser **Esta execução não tem entressafra (motor anterior); rep
 
 ## Os três gráficos
 
+Nos três gráficos, os **momentos de estresse** (veja [Como foi a safra](#como-foi-a-safra)) aparecem como faixas verticais hachuradas em vermelho; no gráfico de Ks elas vêm com o rótulo "estresse".
+
 Os gráficos mostram o dia a dia. Eles respondem quando faltou água e por quê.
 
 ### Chuva, ETc e ETc ajustada
@@ -246,14 +250,51 @@ Com a caixa marcada:
 
 Desmarque a caixa para voltar ao padrão. A caixa fica desabilitada quando a execução na tela foi feita por uma versão anterior do sistema, sem entressafra.
 
+## Como foi a safra
+
+No fim do painel há um resumo escrito para quem não quer coeficientes: a **linha do tempo da cultura**, os **momentos de estresse**, a **produtividade esperada** e **de onde veio a perda**. Ele é igual para o agrônomo, o administrador e o produtor, e reúne em poucas linhas o que os cartões e os gráficos mostram em detalhe. No cabeçalho do painel, o link **Ir para o resumo da safra** leva direto a ele.
+
+> O sistema apoia e não substitui a decisão do responsável técnico. Os números desta seção são os mesmos do bloco Produtividade, apenas escritos de outro jeito.
+
+![Seção Como foi a safra, com linha do tempo, momentos de estresse, produtividade esperada e origem da perda](img/06-14-como-foi-a-safra.png)
+
+### A linha do tempo da cultura
+
+A barra mostra as quatro fases com os nomes do campo — **Germinação**, **Crescimento**, **Floração e enchimento** e **Maturação** —, com a largura proporcional aos dias de cada uma e as datas de emergência e fim. Sobre a barra, cada **momento de estresse** aparece como um segmento vermelho com a duração ("12 dias com pouca água"). Quando a safra ainda está em andamento, um traço marca **hoje**. Se o talhão entrou na safra com menos de 30% da água disponível, o início da barra traz a etiqueta **solo seco na emergência** — é o caso do exemplo.
+
+![Linha do tempo da cultura com as quatro fases e um momento de estresse na floração](img/06-15-linha-do-tempo-da-cultura.png)
+
+Passe o mouse sobre um segmento vermelho para ler o período, a fase e a água que faltou.
+
+### Os momentos de estresse
+
+Um **momento de estresse** é um período de pelo menos três dias seguidos em que o Ks ficou abaixo de 0,70 — a lavoura usou menos de 70% da água de que precisava. A lista traz os momentos do mais danoso ao menos danoso, cada um em uma linha: o período, a duração, a fase em que aconteceu e **quanta água a lavoura ficou sem**, em milímetros (a soma, dia a dia, da água que a lavoura deixou de usar). Quando o momento cai na floração e enchimento, a linha avisa: **esta é a fase que mais pesa na produção**.
+
+![Lista de momentos de estresse, com o mais danoso em destaque](img/06-16-momentos-de-estresse.png)
+
+No exemplo, o momento mais danoso é o da floração. Um período de estresse que começa numa fase e termina na seguinte não é dividido: ele aparece inteiro, com a fase em que passou mais dias. Quando não houve nenhum período relevante, a seção diz **Nenhum período de falta de água relevante até agora**.
+
+### Produtividade esperada e de onde veio a perda
+
+À esquerda, a **produtividade esperada** em sacas por hectare, com a potencial logo abaixo ("de um potencial de 65 sacas"), e a **perda** em sacas e em porcentagem: no exemplo, 27,9<!-- valor:story.totalLossScHa|1 --> sacas por hectare, que a tela arredonda para 28. A produtividade esperada é o mesmo número da produtividade predita do bloco Produtividade, arredondado a meia saca. Se a safra ainda não terminou, uma frase lembra que o número considera o restante do ciclo sem falta de água.
+
+À direita, **De onde veio a perda** divide essas sacas entre as quatro fases, em barras. A conta é feita na ordem do ciclo: a perda de cada fase é calculada sobre o que ainda restava depois das anteriores, e as quatro barras somadas dão exatamente a perda total. A barra maior fica em destaque e a frase abaixo resume: **A maior perda veio da floração e enchimento**.
+
+![Barras com a perda por fase e a frase da maior perda](img/06-17-de-onde-veio-a-perda.png)
+
+Quando a safra não tem produtividade potencial, a seção mostra as perdas só em porcentagem e convida o agrônomo a informar a Ym.
+
+No rodapé, uma frase fixa lembra o que esse número é e o que não é: **estimativa com base na água disponível no solo; não considera pragas, doenças, adubação, excesso de chuva ou granizo**. Se a execução na tela foi feita por uma versão anterior do sistema, a seção pede para reprocessar; se os números foram calculados na hora a partir da execução antiga, ela avisa.
+
 ## Exportar em CSV
 
-Os dois botões do cabeçalho baixam arquivos que abrem no Excel e em outras planilhas.
+Os três botões do cabeçalho baixam arquivos que abrem no Excel e em outras planilhas.
 
 ![Cabeçalho do painel, com os botões de exportação em destaque](img/06-18-exportar.png)
 
 - **Exportar série diária** baixa uma linha por dia, com a janela, os graus-dia, a profundidade da raiz, a ET₀, o Kc, a ETc, a chuva, a depleção, o Ks, a ETc ajustada, o TAW e o RAW. O arquivo traz o que está nos gráficos: por padrão, só os dias da lavoura, da emergência em diante; com **Mostrar entressafra** marcado, também os dias da entressafra, com a coluna Fase igual a `PRE`.
-- **Exportar resumos** baixa uma linha por janela, com os dias, o Ks médio, a redução, a ETc ajustada e a chuva acumuladas, e ainda o índice do ciclo, a produtividade potencial e a produtividade predita, repetidos em todas as linhas. Essas três últimas colunas ficam vazias quando a safra não tem Ym.
+- **Exportar resumos** baixa uma linha por janela, com os dias, o Ks médio, a redução, a ETc ajustada e a chuva acumuladas, o índice do ciclo, a produtividade potencial e a produtividade predita, repetidos em todas as linhas, e a **perda em sacas** atribuída à janela. A perda e as colunas de Ym e predita ficam vazias quando a safra não tem Ym.
+- **Exportar estresses** baixa uma linha por momento de estresse: início, fim, dias, fase dominante, fases atravessadas, Ks mínimo e médio e a água que faltou.
 
 O arquivo vai para a pasta de downloads do computador. O nome traz o talhão e a safra, por exemplo `serie-diaria-talhao-1-sede-2025-26-b652aedf.csv`, em que o trecho final identifica a execução. As colunas são separadas por ponto e vírgula e os números usam vírgula decimal, no padrão brasileiro.
 
@@ -325,12 +366,13 @@ O produtor vê o mesmo painel, com os mesmos números. A diferença é que ele n
 
 ## Roteiro rápido de leitura
 
-1. **Selo da chuva.** Corrigida ou sem correção? Isso diz quanto confiar no detalhe.
-2. **Cartão de F3.** Qual a cor? Qual a redução estimada?
-3. **Bloco Produtividade.** Qual o índice do ciclo? Quantas sacas a falta de água custou? A predição é parcial? Com quanta água o talhão entrou na safra?
-4. **Gráfico de Ks.** Quando foi a queda e quanto durou?
-5. **Campo.** O que você viu na lavoura confirma o painel?
-6. **Avisos.** A cultivar ou a produtividade potencial mudaram desde o cálculo? Se sim, reprocesse.
+1. **Como foi a safra.** Vá ao fim do painel (ou clique em **Ir para o resumo da safra**): quantas sacas se espera, quando faltou água e em que fase, de onde veio a perda.
+2. **Selo da chuva.** Corrigida ou sem correção? Isso diz quanto confiar no detalhe.
+3. **Cartão de F3.** Qual a cor? Qual a redução estimada?
+4. **Bloco Produtividade.** Qual o índice do ciclo? A predição é parcial? Com quanta água o talhão entrou na safra?
+5. **Gráfico de Ks.** Quando foi a queda e quanto durou? As faixas hachuradas em vermelho são os momentos de estresse.
+6. **Campo.** O que você viu na lavoura confirma o painel?
+7. **Avisos.** A cultivar ou a produtividade potencial mudaram desde o cálculo? Se sim, reprocesse.
 
 ---
 
