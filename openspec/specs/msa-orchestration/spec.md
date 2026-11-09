@@ -1,7 +1,7 @@
 # msa-orchestration Specification
 
 ## Purpose
-Orquestração assíncrona do MSA com BullMQ: processo `worker` Node separado da API, ETL Python como worker da fila `era5-ingest`, fluxo semanal agendado (ingest → processamento das safras ativas), backfill automático na criação de safra (cobertura verificada de `preSeasonStart(emergenceDate)` — último 1º de fevereiro ≤ emergência — a hoje − 6, para alimentar o spin-up de entressafra do motor 2.2.0), requisições ao CDS por trimestre, runs órfãs e endpoints de administração de jobs.
+Orquestração assíncrona do MSA com BullMQ: processo `worker` Node separado da API, ETL Python como worker da fila `era5-ingest`, fluxo semanal agendado (ingest → processamento das safras ativas), backfill automático na criação de safra (cobertura verificada de `preSeasonStart(emergenceDate)` — último 1º de fevereiro ≤ emergência — a hoje − 6, para alimentar o spin-up de entressafra do motor 2.2.0), requisições ao CDS sempre mensais (ver era5-ingestion), runs órfãs e endpoints de administração de jobs.
 
 ## Requirements
 
@@ -65,21 +65,6 @@ Ao iniciar, o worker Python SHALL marcar como `FAILED` com erro `orphaned` toda 
 #### Scenario: Run recente preservada
 - **WHEN** existe uma run `RUNNING` com `updated_at` há 10 minutos e o serviço `etl` reinicia
 - **THEN** a run permanece `RUNNING`
-
-### Requirement: Requisições ao CDS por trimestre
-Para intervalos que abrangem mais de dois meses, `download.py` SHALL agrupar as requisições ao CDS por trimestre civil, gravando `cache/<bbox>/<AAAA>-Q<n>.nc`. Antes de requisitar um trimestre, MUST reutilizar os três arquivos mensais em cache quando todos existirem. Intervalos de até dois meses (`latest`) continuam por mês.
-
-#### Scenario: Trimestres de um backfill
-- **WHEN** o intervalo é 2025-11-01 a 2026-03-30
-- **THEN** os grupos são 2025-Q4 (out–dez) e 2026-Q1 (jan–mar), mais o mês seguinte ao fim para fechar os acumulados
-
-#### Scenario: Cache mensal reaproveitado
-- **WHEN** os arquivos `2025-10.nc`, `2025-11.nc` e `2025-12.nc` existem no cache da bbox
-- **THEN** 2025-Q4 não é requisitado ao CDS
-
-#### Scenario: Trimestre parcialmente em cache
-- **WHEN** só `2025-11.nc` e `2025-12.nc` existem
-- **THEN** 2025-Q4 é requisitado inteiro e gravado como `2025-Q4.nc`
 
 ### Requirement: Fluxo semanal agendado
 O `worker` SHALL registrar um job repetível `msa-weekly:trigger` com `pattern '0 2 * * 1'` e `tz 'America/Sao_Paulo'`. Ao disparar, SHALL criar um flow com pai `msa-weekly:run` e filho `era5-ingest {kind: "latest"}` (`attempts 3`, backoff exponencial, `failParentOnFailure`). O pai, ao executar, SHALL enfileirar um `msa-process {reason: "WEEKLY"}` por safra `ACTIVE`, com `jobId` determinístico `weekly_<data>_<harvestId>`. Se o filho falhar após as tentativas, o pai MUST falhar e nenhuma safra MUST ser processada.
@@ -148,7 +133,7 @@ Ao criar uma safra, o sistema SHALL primeiro avaliar a condição "emergência d
 
 #### Scenario: Backfill regional
 - **WHEN** um `ADMIN` envia `bbox [-16.1, -49.4, -16.8, -48.7]`, `from 2025-10-01`, `to 2026-03-31`
-- **THEN** um job `era5-ingest range` é enfileirado e, ao rodar, as células de `era5_cells` dentro da bbox são ingeridas por trimestre
+- **THEN** um job `era5-ingest range` é enfileirado e, ao rodar, as células de `era5_cells` dentro da bbox são ingeridas mês a mês (sete requisições mensais, `2025-10` a `2026-04`, com `periodsDone/periodsTotal` por mês)
 
 #### Scenario: Não administrador
 - **WHEN** um `AGRONOMO` chama qualquer rota de `/admin/jobs`
