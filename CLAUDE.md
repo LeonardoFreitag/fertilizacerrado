@@ -21,6 +21,7 @@
 - **ERA5-Land** (Copernicus/ECMWF), resolução ~9 km, lag ~5 dias
 - Correção de viés por **Quantile Mapping** calibrado com estações INMET/ANA
 - Processamento retrospectivo em **batch semanal** — sem dados em tempo real
+- ETL (`backend/etl`): requisições ao CDS **sempre mensais** (o CDS limita o custo por requisição e recusa trimestres — `cost limits exceeded`); mês recusado é dividido em dois grupos de variáveis e unido em um só `AAAA-MM.nc`; `ERA5_CDS_MAX_CONCURRENT` (padrão 2) requisições em paralelo por run; escrita atômica do cache (`*.part` → `AAAA-MM.nc`)
 
 ### ET₀ — Fórmula FAO-56 Penman-Monteith
 - Referência: Allen et al. (1998) FAO Irrigation Paper No. 56, Eq. 6

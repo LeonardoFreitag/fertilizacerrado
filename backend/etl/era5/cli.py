@@ -103,9 +103,9 @@ def _ingest_cells(
     on_progress: Callable[[int, int], None] | None = None,
 ) -> IngestSummary:
     """Abre a run, baixa, transforma e grava; fecha a run como SUCCEEDED ou
-    FAILED (e relança). ``on_progress(concluídos, total)`` a cada período
-    (mês/trimestre) obtido; cada período e cada célula gravada renovam o
-    heartbeat ``updated_at`` da run."""
+    FAILED (e relança). ``on_progress(concluídos, total)`` a cada mês obtido
+    (até ``settings.cds_max_concurrent`` requisições ao CDS em paralelo); cada
+    mês e cada célula gravada renovam o heartbeat ``updated_at`` da run."""
     run_id = db.open_run(conn, command, date_from, date_to, job_id=job_id)
     log.info("run %s: %d célula(s), %s → %s", run_id, len(cells), date_from, date_to)
     try:
@@ -121,7 +121,10 @@ def _ingest_cells(
 
         client = download.make_client(settings)
         bbox = download.grid_bbox(cells)
-        paths = download.fetch_range(client, bbox, date_from, date_to, settings.cache_dir, on_progress=progress)
+        paths = download.fetch_range(
+            client, bbox, date_from, date_to, settings.cache_dir,
+            on_progress=progress, max_concurrent=settings.cds_max_concurrent,
+        )
         ds = transform.open_hourly(paths)
 
         total = 0

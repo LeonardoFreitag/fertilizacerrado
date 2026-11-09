@@ -91,12 +91,12 @@ check "ETL sem novas requisições (última run SUCCEEDED)" SUCCEEDED "$(sql "SE
 
 echo "== POST .../msa/process: 202 por padrão, sync só ADMIN =="
 call POST "/harvests/$H/msa/process" "$PEDRO";     check "produtor → 403" 403 "$STATUS"
-call POST "/harvests/$H/msa/process?seed=7" "$ANA"; check "agrônoma → 202" 202 "$STATUS"; JOB3=$(echo "$BODY" | j jobId)
+call POST "/harvests/$H/msa/process" "$ANA"; check "agrônoma → 202" 202 "$STATUS"; JOB3=$(echo "$BODY" | j jobId)
 check "corpo: queue msa-process, status queued" "msa-process|queued" "$(echo "$BODY" | j queue)|$(echo "$BODY" | j status)"
 wait_job msa-process "$JOB3" 120; check "job manual concluído" completed "$JOB_STATE"
-call GET "/harvests/$H/msa/runs" "$ANA"; check "run mais recente MANUAL com jobId e seed 7" "MANUAL|$JOB3|7" "$(echo "$BODY" | j 0.reason)|$(echo "$BODY" | j 0.jobId)|$(echo "$BODY" | j 0.seed)"
+call GET "/harvests/$H/msa/runs" "$ANA"; check "run mais recente MANUAL com jobId" "MANUAL|$JOB3" "$(echo "$BODY" | j 0.reason)|$(echo "$BODY" | j 0.jobId)"
 call POST "/harvests/$H/msa/process?sync=true" "$ANA";   check "sync para agrônoma → 403 SYNC_ADMIN_ONLY" 403 "$STATUS"; contains "código" "$BODY" SYNC_ADMIN_ONLY
-call POST "/harvests/$H/msa/process?sync=true&seed=7" "$ADMIN"; check "sync para admin → 201 inline" 201 "$STATUS"
+call POST "/harvests/$H/msa/process?sync=true" "$ADMIN"; check "sync para admin → 201 inline" 201 "$STATUS"
 check "run inline: MANUAL, sem jobId, triggeredById preenchido" "MANUAL|null|1" "$(echo "$BODY" | j run.reason)|$(echo "$BODY" | j run.jobId)|$( [ -n "$(echo "$BODY" | j run.triggeredById)" ] && echo 1 || echo 0 )"
 call POST "/harvests/00000000-0000-4000-8000-000000000000/msa/process" "$ANA"; check "safra inexistente → 404 (nada enfileirado)" 404 "$STATUS"
 

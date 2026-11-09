@@ -128,6 +128,7 @@ services:
       CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
       CDS_API_KEY: ${CDS_API_KEY:-}
       ETL_CACHE_DIR: /data/cache
+      ERA5_CDS_MAX_CONCURRENT: ${ERA5_CDS_MAX_CONCURRENT:-2}
       QM_MAX_DISTANCE_KM: ${QM_MAX_DISTANCE_KM:-50}
       QM_MIN_YEARS: ${QM_MIN_YEARS:-10}
       QM_WET_DAY_MM: ${QM_WET_DAY_MM:-0.1}

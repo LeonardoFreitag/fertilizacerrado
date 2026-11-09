@@ -13,6 +13,19 @@ class ConfigError(RuntimeError):
     pass
 
 
+def _positive_int(env: dict[str, str], name: str, default: int) -> int:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} deve ser um inteiro ≥ 1 (recebido {raw!r})") from exc
+    if value < 1:
+        raise ConfigError(f"{name} deve ser um inteiro ≥ 1 (recebido {raw!r})")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -26,6 +39,8 @@ class Settings:
     qm_min_years: int = 10
     qm_wet_day_mm: float = 0.1
     qm_max_ratio: float = 3.0
+    # Requisições simultâneas ao CDS por run (backfill mensal); o CDS limita poucas por usuário
+    cds_max_concurrent: int = 2
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -44,6 +59,7 @@ class Settings:
             qm_min_years=int(env.get("QM_MIN_YEARS", "") or 10),
             qm_wet_day_mm=float(env.get("QM_WET_DAY_MM", "") or 0.1),
             qm_max_ratio=float(env.get("QM_MAX_RATIO", "") or 3.0),
+            cds_max_concurrent=_positive_int(env, "ERA5_CDS_MAX_CONCURRENT", 2),
         )
 
     def require_redis_url(self) -> str:

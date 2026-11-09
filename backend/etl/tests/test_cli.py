@@ -43,3 +43,15 @@ def test_parser_subcommands():
     assert p.parse_args(["status", "--limit", "3"]).limit == 3
     with pytest.raises(SystemExit):
         p.parse_args(["ingest", "--from", "01/11/2025", "--to", "2025-11-03"])
+
+
+def test_cds_max_concurrent_default_and_override():
+    base = {"DATABASE_URL": "postgresql://x"}
+    assert Settings.from_env(base).cds_max_concurrent == 2
+    assert Settings.from_env({**base, "ERA5_CDS_MAX_CONCURRENT": "3"}).cds_max_concurrent == 3
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "x"])
+def test_cds_max_concurrent_invalid(raw):
+    with pytest.raises(ConfigError, match="ERA5_CDS_MAX_CONCURRENT"):
+        Settings.from_env({"DATABASE_URL": "postgresql://x", "ERA5_CDS_MAX_CONCURRENT": raw})

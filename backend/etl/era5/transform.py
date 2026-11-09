@@ -44,7 +44,7 @@ def open_hourly(paths: Sequence[str | Path]) -> xr.Dataset:
     para ``time`` e combinando a dimensão ``expver`` (ERA5T) quando presente."""
     if not paths:
         raise TransformError("nenhum arquivo NetCDF")
-    datasets = [_normalize(xr.open_dataset(p)) for p in paths]
+    datasets = [normalize(xr.open_dataset(p)) for p in paths]
     ds = datasets[0] if len(datasets) == 1 else xr.concat(datasets, dim="time")
     ds = ds.sortby("time")
     # passos repetidos entre meses (não deveriam ocorrer) ficam com a última ocorrência
@@ -57,7 +57,9 @@ def open_hourly(paths: Sequence[str | Path]) -> xr.Dataset:
     return ds
 
 
-def _normalize(ds: xr.Dataset) -> xr.Dataset:
+def normalize(ds: xr.Dataset) -> xr.Dataset:
+    """Coordenada de tempo ``time`` e dimensão ``expver`` (ERA5T) reduzida; usada
+    também por ``download.py`` ao unir grupos de variáveis."""
     if "valid_time" in ds.dims or "valid_time" in ds.coords:
         ds = ds.rename({"valid_time": "time"})
     if "expver" in ds.dims:

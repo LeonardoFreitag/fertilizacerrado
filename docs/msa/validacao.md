@@ -123,7 +123,7 @@ $$PBIAS = \frac{\sum_{i=1}^{n}(O_i - S_i)}{\sum_{i=1}^{n} O_i} \times 100\%$$
 
 **Procedimento:**
 1. Importar a série diária da estação INMET (BDMEP): `docker compose run --rm etl stations import <arquivo.csv> --format bdmep` (ou pelo upload em `/admin`).
-2. Garantir a série ERA5 da célula no mesmo período (`ingest --from --to`, por trimestre).
+2. Garantir a série ERA5 da célula no mesmo período (`ingest --from --to`, pedido mês a mês).
 3. Rodar a validação com períodos disjuntos (ex.: calibrar 2010–2019, testar 2020–2024):
    ```bash
    docker compose run --rm etl qm validate --cell -16.7 -49.3 --station 83423 \

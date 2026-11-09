@@ -543,8 +543,9 @@ O ERA5 da célula precisa cobrir calibração e teste. Para 2010–2024, são 15
 docker compose run --rm etl ingest --from 2010-01-01 --to 2024-12-31
 ```
 
-> **Tempo:** a fila do Copernicus leva cerca de 10 minutos por requisição, e o
-> período é pedido por trimestre: cerca de 60 requisições, ou **várias horas**.
+> **Tempo:** a fila do Copernicus leva de minutos a dezenas de minutos por
+> requisição, e o período é pedido mês a mês (o CDS recusa requisições maiores
+> por custo): cerca de 180 requisições, duas por vez, ou **várias horas**.
 > Rode à noite, deixando o Mac ligado. O que for baixado fica em cache e não é
 > pedido de novo. O comando cobre todas as células que têm talhão cadastrado.
 > Acompanhe com `pnpm etl:status`.
